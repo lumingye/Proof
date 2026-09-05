@@ -1,0 +1,20 @@
+[Unit]
+Description=Proof bar state and Agent drinking API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/proof/service
+Environment=PROOF_HOST=127.0.0.1
+Environment=PROOF_PORT=8791
+ExecStart=/usr/bin/node /opt/proof/service/server.mjs
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/proof/service/state
+
+[Install]
+WantedBy=multi-user.target

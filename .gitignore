@@ -1,0 +1,10 @@
+node_modules/
+state/
+*.token
+*.log
+*.tmp
+.DS_Store
+coverage/
+dist/
+
+node_modules

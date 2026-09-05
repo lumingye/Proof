@@ -1,0 +1,11 @@
+{
+  "name": "proof-service",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "PROOF_AGENTS='chara:CharA,charb:CharB,charc:CharC,chard:CharD' node --test tests/*.test.js",
+    "test:audit": "PROOF_AGENTS='chara:CharA,charb:CharB,charc:CharC,chard:CharD' node --test tests/audit/*.test.js",
+    "test:all": "PROOF_AGENTS='chara:CharA,charb:CharB,charc:CharC,chard:CharD' node --test tests/*.test.js tests/audit/*.test.js"
+  }
+}

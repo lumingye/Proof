@@ -1,0 +1,13 @@
+{
+  "name": "proof-engine",
+  "version": "11.7.0",
+  "description": "Proof —— Agent 饮品与状态引擎",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "test:audit": "node --test tests/audit/*.test.js",
+    "test:all": "node --test tests/*.test.js tests/audit/*.test.js"
+  },
+  "license": "MIT"
+}
