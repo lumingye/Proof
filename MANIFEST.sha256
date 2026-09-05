@@ -118,6 +118,6 @@ dced931786a7554718b614a5d83d8049c99493bbe50aa51ba41f8a01060a0970  ./service/test
 ffba2677433fdbb33b5c908464dea14eb8316434bf8f29cd4be5f959fe0cab06  ./service/tests/repair-reserved-name.test.js
 f622c7ea2437d93772514098f6ebcb5d8fc4dd6ef323a53e57136ee032fb7166  ./service/tests/state-delivery-reset.test.js
 f67468573f02cfd989dee4717e525e4424fe34bff1990b4434682301b79f947b  ./ui/drink/index.html
-bc30b3416e1f473bd76c7968413013b413ff0d579a3d3353c9751e09cbada2b3  ./ui/index.html
+bd76e62f109ef32802019d2a0bb741c82c29a8ad67d9749aa357e6438a5c278b  ./ui/index.html
 ebee04a7ac8fae60348cfa0a5ced12146203c422591c710a2b9e6f620eace3ca  ./ui/proof-engine.js
 d8d55e60401c2258ce98a033cacd2ef6fe9131b590a1474cdf55931cec6d1c53  ./ui/tests/e2e.test.js
