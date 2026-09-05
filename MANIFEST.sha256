@@ -9,7 +9,7 @@ cb8686fb71da108b641d3434d5ae85d59f0a0a2b3751bd50fbca1ccf0e01fd62  ./docs/ordinar
 4d56952b0fb13bf8f9b6c13a6d4c34a075bac3af447636a1df4335d7576e2f97  ./engine/.gitignore
 a9ff4ef6cde210ce092debb47ff107f8c50a4a809c227ad03a09d08327eba58a  ./engine/package.json
 959cbf1ff5ad83a59304ae56cd05a191512c99af0b1677ede444d1725dc41593  ./engine/src/content/actives.js
-e09dad057a93135bf9a081fed7b4968229650211fee739262fc8150637b98261  ./engine/src/content/barManual.js
+01b3fefa393f88d6eb437f926d16a807bae778940885dcfb30e39d8131f5c68b  ./engine/src/content/barManual.js
 228ef4b7e4eb6eb54f84d04736265e7fa8bed5d557f2e7019a9b52998fd3d51d  ./engine/src/content/examplePack.js
 7410bb6fcce0bafc7f1c394e9d43c1b0d602c5e951dc0634f880db8968fcefee  ./engine/src/content/realPack.js
 544978c09c74ea64ec23aeefce82bc5add703004e02342eb295fdf6a5bd86ef2  ./engine/src/core/active.js
@@ -118,6 +118,6 @@ dced931786a7554718b614a5d83d8049c99493bbe50aa51ba41f8a01060a0970  ./service/test
 ffba2677433fdbb33b5c908464dea14eb8316434bf8f29cd4be5f959fe0cab06  ./service/tests/repair-reserved-name.test.js
 f622c7ea2437d93772514098f6ebcb5d8fc4dd6ef323a53e57136ee032fb7166  ./service/tests/state-delivery-reset.test.js
 f67468573f02cfd989dee4717e525e4424fe34bff1990b4434682301b79f947b  ./ui/drink/index.html
-bd76e62f109ef32802019d2a0bb741c82c29a8ad67d9749aa357e6438a5c278b  ./ui/index.html
-ebee04a7ac8fae60348cfa0a5ced12146203c422591c710a2b9e6f620eace3ca  ./ui/proof-engine.js
+e7ea57c2c617f5a2187decb1be0bc9adb33162db7b23047b4225797c1f3f3eda  ./ui/index.html
+286c954796988c836258a0fe4454ecd474a3ac5509927b9d04bdbd0ceebaf311  ./ui/proof-engine.js
 d8d55e60401c2258ce98a033cacd2ef6fe9131b590a1474cdf55931cec6d1c53  ./ui/tests/e2e.test.js
