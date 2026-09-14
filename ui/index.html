@@ -254,9 +254,12 @@ function render(){
       var cup=unchanged?state.editingBase.drink.engineCup:buildDraft(n,r),category=unchanged?state.editingBase.drink.category:'custom';
       state.sent=true;state.sendError='';render();
       try{
-        var response=await fetch('/proof-api/human/offers',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({name:n,finish:state.finishText||'',effectVisibleToMixer:state.effectVisibleToMixer!==false,baseMenuId:unchanged?state.editingBase.drink.engineCup.id:null,garnishes:state.garnishes||[],method:state.method||null,parts:parts,cupType:engineGlass[state.selectedGlass]})});
+        // selectedMenuId records what the user actually picked.  It is kept even when an
+        // old browser state makes the editable fields look changed, so the server can
+        // reject an accidental identity downgrade instead of silently serving water.
+        var response=await fetch('/proof-api/human/offers',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({name:n,finish:state.finishText||'',effectVisibleToMixer:state.effectVisibleToMixer!==false,selectedMenuId:state.editingBase?state.editingBase.drink.engineCup.id:null,baseMenuId:unchanged?state.editingBase.drink.engineCup.id:null,garnishes:state.garnishes||[],method:state.method||null,parts:parts,cupType:engineGlass[state.selectedGlass]})});
         var made=await response.json();
-        if(!response.ok)throw new Error(made.error==='finish_too_long'||made.error==='finish_rejected'?'留言未保存：'+made.error:(made.error||'递酒失败'));
+        if(!response.ok)throw new Error(made.error==='selected_menu_mismatch'?'酒单状态已更新，请重新点选这杯再递出':(made.error==='finish_too_long'||made.error==='finish_rejected'?'留言未保存：'+made.error:(made.error||'递酒失败')));
         state.lastLink=made.link;
         state.lastOffer={id:made.offerId,offerId:made.offerId,name:made.name||n,link:made.link};
         var p={id:made.offerId,offerId:made.offerId,name:state.lastOffer.name,isCustom:!unchanged,recipe:unchanged?[]:r,glass:state.selectedGlass,color:colorHex(cup.color),description:cup.intro||'',category:category,sentAt:Date.now(),status:'open',effectVisibleToMixer:state.effectVisibleToMixer!==false,engineCup:cup,link:made.link};
