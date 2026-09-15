@@ -9,9 +9,13 @@ import { adminFromRequest, mintSession, sessionCookie, writeAuthStatus, auditRec
 import { createGateway } from './gateway/index.mjs';
 import { handleModelEndpoint } from './gateway/handler.mjs';
 import { PROOF_GATEWAY_KEY_HEADER } from './gateway/proxy.mjs';
+import { TOOLS as MCP_TOOLS, runTool as runMcpTool } from './mcp.mjs';
 
 const HOST = process.env.PROOF_HOST || '127.0.0.1';
-const PORT = Number(process.env.PROOF_PORT || 8791);
+const PORT = Number(process.env.PROOF_PORT || process.env.PORT || 8791);
+const UI_DIR = fileURLToPath(new URL('../ui/', import.meta.url));
+const MCP_PATH_SECRET = String(process.env.PROOF_MCP_PATH_SECRET || '').trim();
+const MCP_PATH = MCP_PATH_SECRET ? `/mcp/${encodeURIComponent(MCP_PATH_SECRET)}` : '/mcp';
 const PUBLIC_DRINK_URL = process.env.PROOF_PUBLIC_DRINK_URL || `http://${HOST}:${PORT}/proof/drink/`;
 // 生命周期配置。**非法值直接抛错，不静默回退。**
 const LIFECYCLE = resolveLifecycleConfig(process.env);
@@ -778,11 +782,23 @@ function buildPortableResult(claimedName, projection, consumedAtMs, events = [])
 
 async function createHumanOffer(payload) {
   const parts = validateParts(payload.parts);
-  const base = payload.baseMenuId ? [...menu, ...catalog.drinks.map((item) => item.cup)].find((cup) => cup.id === payload.baseMenuId) : null;
+  const availableCups = [...menu, ...catalog.drinks.map((item) => item.cup)];
+  const selected = payload.selectedMenuId
+    ? availableCups.find((cup) => cup.id === payload.selectedMenuId)
+    : null;
+  if (payload.selectedMenuId && !selected) throw Object.assign(new Error('selected_menu_not_found'), { status: 409 });
+  const base = payload.baseMenuId ? availableCups.find((cup) => cup.id === payload.baseMenuId) : null;
   const name = sanitizeClaimedName(payload.name, { ingredientIds: Object.keys(ingredients) }) || DEFAULT_DRINK_NAME;
   const cupTypes = { '子弹杯': 90, '矮球杯': 300, '高球杯': 350, '鸡尾酒杯': 250, '碟形杯': 200, '大杯': 500 };
   if (payload.cupType && !cupTypes[payload.cupType]) throw Object.assign(new Error('invalid_cup_type'), { status: 400 });
   if (payload.cupType && parts.reduce((sum, part) => sum + part.volume, 0) > cupTypes[payload.cupType]) throw Object.assign(new Error('cup_overflow'), { status: 400 });
+  const selectedUnchanged = selected
+    && name === selected.claimedName
+    && sameRecipe(parts, selected.recipe)
+    && (!payload.cupType || payload.cupType === selected.cupType);
+  if (selected && !selectedUnchanged && !payload.allowMenuEdit) {
+    throw Object.assign(new Error('selected_menu_mismatch'), { status: 409 });
+  }
   const intro = sanitizeIntro(payload.intro ?? (base && name === base.claimedName ? base.intro : ''), { ingredientIds: Object.keys(ingredients) }) || '一杯没有说明的特调。';
   let finish = '';
   if (payload.finish != null && String(payload.finish).trim()) {
@@ -790,8 +806,9 @@ async function createHumanOffer(payload) {
     if (!fin.ok) throw Object.assign(new Error(fin.error), { status: 400 });
     finish = fin.value;
   }
-  const cup = base && name === base.claimedName && sameRecipe(parts, base.recipe) && (!payload.cupType || payload.cupType === base.cupType)
-    ? base
+  const canonicalBase = selectedUnchanged ? selected : base;
+  const cup = canonicalBase && name === canonicalBase.claimedName && sameRecipe(parts, canonicalBase.recipe) && (!payload.cupType || payload.cupType === canonicalBase.cupType)
+    ? canonicalBase
     : buildFromParts(name, parts, { kind: 'custom', listed: false, intro, finish, garnishes: validateGarnishes(payload.garnishes) });
   if (payload.cupType) cup.cupType = payload.cupType;
   // 接口约定：公开链接不预绑定接收者，按单杯、单 offer 隔离结算。
@@ -805,7 +822,7 @@ async function createHumanOffer(payload) {
   const capabilityToken = randomBytes(32).toString('base64url');
   catalog.capabilities.push({ offerId, tokenHash: hashToken(capabilityToken), token: capabilityToken, createdAt: Date.now(), status: 'open' });
   await persist();
-  return { ok: true, offerId, name, link: publicLink(capabilityToken) };
+  return { ok: true, offerId, name: cup.claimedName, link: publicLink(capabilityToken) };
 }
 
 function customItem(id) { return catalog.drinks.find((item) => item.id === id); }
@@ -873,8 +890,39 @@ async function resetAgent(agentId, mode, actor) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    // The browser uses this prefix so UI/API deployments can still be split.
+    // In the all-in-one Zeabur image it simply maps back to the local API.
+    if (url.pathname === '/proof-api' || url.pathname.startsWith('/proof-api/')) {
+      url.pathname = url.pathname.slice('/proof-api'.length) || '/';
+    }
     const gatewayPath = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, '') : url.pathname;
     if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, version: 1 });
+    if (req.method === 'GET' && ['/','/index.html','/proof/drink/','/proof/drink/index.html','/drink-visuals.js','/proof-engine.js'].includes(url.pathname)) {
+      const relative = url.pathname.startsWith('/proof/drink')
+        ? 'drink/index.html'
+        : (url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
+      const payload = await readFile(`${UI_DIR}${relative}`);
+      const type = relative.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8';
+      res.writeHead(200, { 'content-type': type, 'content-length': payload.length, 'cache-control': relative.endsWith('.html') ? 'no-cache' : 'public, max-age=3600', 'x-content-type-options': 'nosniff' });
+      return res.end(payload);
+    }
+    // Stateless MCP over Streamable HTTP. Identity is server-bound through the
+    // deployment's PROOF_AGENT_ID/token file, never accepted from model input.
+    if (url.pathname === MCP_PATH && req.method === 'POST') {
+      const message = await body(req);
+      if (!message || message.jsonrpc !== '2.0') return json(res, 400, { jsonrpc: '2.0', id: message?.id ?? null, error: { code: -32600, message: 'Invalid Request' } });
+      if (message.method === 'notifications/initialized') { res.writeHead(202); return res.end(); }
+      if (message.method === 'initialize') return json(res, 200, { jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: `proof-${process.env.PROOF_AGENT_ID || AGENTS[0].id}`, version: '11.8.7-zeabur.1' } } });
+      if (message.method === 'tools/list') return json(res, 200, { jsonrpc: '2.0', id: message.id, result: { tools: MCP_TOOLS } });
+      if (message.method === 'tools/call') {
+        let payload;
+        try { payload = await runMcpTool(message.params?.name, message.params?.arguments || {}); }
+        catch (error) { payload = { ok: false, error: 'tool_failed', detail: String(error?.message || error) }; }
+        return json(res, 200, { jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: JSON.stringify(payload) }], isError: payload?.ok === false } });
+      }
+      return json(res, 200, { jsonrpc: '2.0', id: message.id ?? null, error: { code: -32601, message: 'Method not found' } });
+    }
+    if (url.pathname === MCP_PATH && req.method === 'GET') return json(res, 405, { ok: false, error: 'streamable_http_post_required' });
     // —— 模型网关入口（V1）——
     if (req.method === 'POST' && gateway && gateway.ROUTES[gatewayPath]) {
       if (!gateway.enabled) return json(res, 404, { ok: false, error: 'gateway_disabled' });

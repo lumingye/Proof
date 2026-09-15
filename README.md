@@ -2,6 +2,28 @@
 
 **你给自己的 AI 递一杯酒。他喝了。之后的回应带着这杯酒留下的影响。**
 
+## Zeabur 一键部署（本 fork）
+
+仓库根目录的 `Dockerfile` 会在一个服务中同时启动调酒台、Proof API、Gateway 与 ChatGPT 可连接的 Streamable HTTP MCP，并把状态写进 `/data`。
+
+部署前至少修改以下环境变量（不要继续使用示例值）：
+
+| 变量 | 示例 | 用途 |
+|---|---|---|
+| `PROOF_AGENTS` | `xunzhou:洵舟` | 创建 Agent 身份 |
+| `PROOF_AGENT_ID` | `xunzhou` | 绑定远程 MCP 身份 |
+| `PROOF_ADMIN_SETUP_KEY` | 长随机字符串 A | 首次设置网页管理口令 |
+| `PROOF_MCP_PATH_SECRET` | 长随机字符串 B | 隐藏并保护远程 MCP 地址 |
+| `PROOF_PUBLIC_DRINK_URL` | `https://你的域名/proof/drink/` | 生成可公开打开的饮酒链接 |
+
+同时给服务挂载 `/data` 持久卷。部署完成后：
+
+- 调酒台：`https://你的域名/`
+- 健康检查：`https://你的域名/health`
+- ChatGPT MCP：`https://你的域名/mcp/<PROOF_MCP_PATH_SECRET>`
+
+ChatGPT 中选择“无身份验证”。这里的地址本身就是凭据，不要截图或公开分享完整 MCP URL。只接 MCP 时，请在需要受 Proof 影响的每一轮调用 `proof_turn_context`；要自动注入及真正隐藏断片历史，仍需宿主接 Gateway。
+
 那不是一套统一的“醉酒人格”。Proof 记住杯里有什么、他以为有什么、喝下多少，以及时间过去了多久。它把这些事实结算成内部推动和客观状态，再交还给原来的角色。
 
 你可以递一杯固定酒，也可以把白水说成另一种东西。两杯都可能带来反应，来源却不同：一部分来自可以证明的成分与登记性格，另一部分来自饮用前形成的信念。

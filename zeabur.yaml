@@ -1,0 +1,28 @@
+services:
+  proof:
+    build:
+      dockerfile: Dockerfile
+    ports:
+      - id: web
+        port: 8791
+        type: HTTP
+    volumes:
+      - id: proof-data
+        dir: /data
+    env:
+      PROOF_HOST:
+        default: 0.0.0.0
+      PROOF_PORT:
+        default: "8791"
+      PROOF_DATA_DIR:
+        default: /data
+      PROOF_API_URL:
+        default: http://127.0.0.1:8791
+      PROOF_AGENTS:
+        default: xunzhou:洵舟
+      PROOF_AGENT_ID:
+        default: xunzhou
+      PROOF_ADMIN_SETUP_KEY:
+        default: CHANGE_ME_TO_A_LONG_RANDOM_SECRET
+      PROOF_MCP_PATH_SECRET:
+        default: CHANGE_ME_TO_A_DIFFERENT_RANDOM_SECRET

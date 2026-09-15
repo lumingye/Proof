@@ -387,6 +387,45 @@ test('固定酒历史只显示登记性格，不混入配方药理', async (t) =
   assert.equal(row.projection.actualEffectDescription.text, effectTextFor({ 愉悦: -1, 唤醒: 1, 守门: -1 }));
 });
 
+test('迷情剂选择身份贯穿递出与饮用，不能静默降级成白水', async (t) => {
+  const ctx = await startServer();
+  t.after(() => stopServer(ctx));
+  const potion = {
+    name: '迷情剂',
+    selectedMenuId: 'cup-迷情剂',
+    baseMenuId: 'cup-迷情剂',
+    parts: [{ id: '水', volume: 200 }, { id: '冰', volume: 60 }],
+    cupType: '矮球杯'
+  };
+  const made = await req(ctx, '/human/offers', { method: 'POST', body: potion });
+  assert.equal(made.status, 201, JSON.stringify(made.json));
+  assert.equal(made.json.name, '迷情剂');
+  const token = made.json.link.slice(made.json.link.indexOf('#') + 1);
+  const before = await req(ctx, '/capability/offer', { token });
+  assert.equal(before.json.projection.claimedName, '迷情剂');
+  const after = await req(ctx, '/capability/offer', { method: 'POST', token, body: { action: 'drink' } });
+  assert.equal(after.status, 200);
+  assert.equal(after.json.projection.flavorDescription, '比普通的水似乎多了一丝甘甜与香气。');
+  assert.notEqual(after.json.projection.actualEffectDescription.text, '没有什么额外的东西被推动。');
+  assert.ok(after.json.projection.actualEffectDescription.text.length > 20, '迷情剂必须产生非零的完整饮后状态');
+});
+
+test('已选择迷情剂但旧前端提交白水时明确拒绝，不生成错误链接', async (t) => {
+  const ctx = await startServer();
+  t.after(() => stopServer(ctx));
+  const made = await req(ctx, '/human/offers', {
+    method: 'POST',
+    body: {
+      name: '一杯水',
+      selectedMenuId: 'cup-迷情剂',
+      parts: [{ id: '水', volume: 200 }],
+      cupType: '矮球杯'
+    }
+  });
+  assert.equal(made.status, 409);
+  assert.equal(made.json.error, 'selected_menu_mismatch');
+});
+
 test('public before and after projections stay within their allowlists', async (t) => {
   const ctx = await startServer();
   t.after(() => stopServer(ctx));

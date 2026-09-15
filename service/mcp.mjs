@@ -10,7 +10,8 @@
 import { readFile } from 'node:fs/promises';
 
 const agentId = process.env.PROOF_AGENT_ID;
-const tokenFile = process.env.PROOF_AGENT_TOKEN_FILE;
+const tokenFile = process.env.PROOF_AGENT_TOKEN_FILE
+  || (process.env.PROOF_DATA_DIR && agentId ? `${process.env.PROOF_DATA_DIR}/${agentId}.token` : null);
 const base = process.env.PROOF_API_URL || 'http://127.0.0.1:8791';
 
 async function agentToken() {
@@ -44,7 +45,7 @@ async function callAgent(path, { method = 'GET', body: payload } = {}) {
 // 启动前把“配置里声称的 Agent”与 bearer token 实际解析出的 Agent 对上。
 // 服务端 token 身份才是权威；若两者不一致，宁可拒绝启动，也不能让 proof-chara
 // 的进程把后续写操作记进 CharB 账本。
-async function verifyBoundIdentity() {
+export async function verifyBoundIdentity() {
   if (!agentId || !tokenFile) {
     throw new Error('PROOF_AGENT_ID 与 PROOF_AGENT_TOKEN_FILE 都必须配置');
   }
@@ -117,7 +118,7 @@ const BELIEFS_SCHEMA = {
 
 const INTERNAL_USE_NOTE = '这些状态是饮品对你的推动力。如果它影响了你，让它自然改变你的注意、选择、反应和表达方式，而不是成为回答的主题。{{user}} 询问你的感受时，建议从整体体感出发自然回答，只挑最容易被自己察觉的一两点；其余影响通过实际回应表现出来。具体表现由你结合人格和上下文决定。';
 
-const TOOLS = [
+export const TOOLS = [
   {
     name: 'proof_turn_context',
     description: '读取当前 Agent 的 Proof 内部状态。把 context/stateHints 当作饮品造成的内部推动力，让它自然影响注意、选择、反应和表达方式。{{user}} 询问你的感受时，从整体体感自然回答，只挑最容易被自己察觉的一两点，其余影响通过实际回应表现。普通酒款是软推力，信念是主观回声，吐/断片/宕机/塌是客观状态。',
@@ -170,7 +171,7 @@ const TOOLS = [
   }
 ];
 
-async function runTool(name, args = {}) {
+export async function runTool(name, args = {}) {
   if (name === 'proof_turn_context') {
     const ctx = await turnContext();
     if (!ctx || ctx.ok === false) {
@@ -254,23 +255,27 @@ async function handle(msg) {
   if (msg.id != null) send(msg.id, { content: [{ type: 'text', text: '' }] });
 }
 
-try {
-  await verifyBoundIdentity();
-} catch (error) {
-  console.error(`proof-mcp 拒绝启动：${String(error?.message || error)}`);
-  process.exit(78);
-}
-
-let buf = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk) => {
-  buf += chunk;
-  let idx;
-  while ((idx = buf.indexOf('\n')) >= 0) {
-    const line = buf.slice(0, idx).trim();
-    buf = buf.slice(idx + 1);
-    if (!line) continue;
-    try { handle(JSON.parse(line)); }
-    catch { /* fail open */ }
+// Imported by server.mjs for remote Streamable HTTP MCP; only attach the stdio
+// transport when this file is the process entrypoint.
+if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {
+  try {
+    await verifyBoundIdentity();
+  } catch (error) {
+    console.error(`proof-mcp 拒绝启动：${String(error?.message || error)}`);
+    process.exit(78);
   }
-});
+
+  let buf = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => {
+    buf += chunk;
+    let idx;
+    while ((idx = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (!line) continue;
+      try { handle(JSON.parse(line)); }
+      catch { /* fail open */ }
+    }
+  });
+}
