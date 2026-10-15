@@ -3,8 +3,9 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { mkdir, readFile, rename, writeFile, chmod } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ProofEngine, buildFromParts, ingredients, menu, realPack, sanitizeClaimedName, sanitizeIntro, sanitizeFinish, assembleEffectDescription, assembleFlavorDescription, publicEffectDescription, createTurnBridge, resolveLifecycleConfig, isReservedHiddenName, normalizeGarnishes, buildAgentTurnContext, STATE_FRAME_NOTE, DETERMINISTIC_EFFECT_FRAME_NOTE, OBJECTIVE_EFFECT_FRAME_NOTE, BELIEF_EFFECT_FRAME_NOTE, sanitizeSubjectiveBelief, buildAgentStateHints, projectAgentObjectiveStates } from '../engine/src/index.js';
+import { ProofEngine, buildFromParts, ingredients, menu, realPack, sanitizeClaimedName, sanitizeIntro, sanitizeFinish, assembleEffectDescription, assembleFlavorDescription, manualFor, normalizeEffectHalfLife, publicEffectDescription, createTurnBridge, resolveLifecycleConfig, isReservedHiddenName, normalizeGarnishes, buildAgentTurnContext, STATE_FRAME_NOTE, DETERMINISTIC_EFFECT_FRAME_NOTE, OBJECTIVE_EFFECT_FRAME_NOTE, BELIEF_EFFECT_FRAME_NOTE, sanitizeSubjectiveBelief, buildAgentStateHints, projectAgentObjectiveStates } from '../engine/src/index.js';
 import { hashUnit, HIDDEN_DRAW_P } from '../engine/src/core/hiddenDraw.js';
+import { normalizeUntrusted, looksLikeInstruction, INTRO_MAX } from '../engine/src/core/sanitize.js';
 import { adminFromRequest, mintSession, sessionCookie, writeAuthStatus, auditRecord } from './lib/adminAuth.mjs';
 import { createGateway } from './gateway/index.mjs';
 import { handleModelEndpoint } from './gateway/handler.mjs';
@@ -281,6 +282,10 @@ const engines = loadedEngines.agents;
 const publicEngines = loadedEngines.publicEngines;
 let catalog = await loadCatalog();
 catalog.visibility ||= {};
+// 今日酒单的「详细介绍」（吧台手册）是否给 Agent 看。全局一个开关，默认关。
+catalog.detailForAgent = catalog.detailForAgent === true;
+// 调酒台点「把酒单推给 Agent」后挂起，该 Agent 下一次取 turn-context 时送一次就清掉。
+catalog.menuPush ||= {};
 catalog.capabilities ||= [];
 catalog.audit ||= [];
 // “存入酒单”就是固定酒身份。旧版本把用户保存的酒误标为 custom；启动时原地
@@ -440,6 +445,27 @@ async function resolveAgentIdentity(req) {
 }
 
 // 复刻引擎“当前杯未结束前不得开始喝第二杯”的公开判定（只读 state，不引入第二套逻辑）。
+// 分口喝：这次喝几口。不传 = 整杯（剩下的全喝完）。
+const MAX_MOUTHS_PER_CALL = 50;
+function mouthsFrom(payload) {
+  const raw = payload?.mouths;
+  if (raw == null || raw === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > MAX_MOUTHS_PER_CALL) throw Object.assign(new Error('invalid_mouths'), { status: 400 });
+  return n;
+}
+
+// 喝完（或喝了几口）之后告诉 Agent 杯里还剩多少。
+// 点新杯时手里那半杯被放下了，也一并告诉 Agent。
+function sipInfo(result, putDown = result?.putDown) {
+  const info = result?.partial
+    ? { partial: true, remainingMouths: result.remainingMouths, totalMouths: result.totalMouths }
+    : { partial: false, remainingMouths: 0 };
+  if (putDown) info.putDown = { ...putDown, hint: `手里那半杯搁到吧台上了：没喝的口还留着，${putDown.expiresInMin ?? 70} 分钟内能用 proof_sip 带上 offerId 端回来；已经喝下去的部分从现在开始消退。` };
+  if (result?.pickedUp) info.pickedUp = { ...result.pickedUp, hint: '从吧台上把这杯端回来了，接着喝。' };
+  return info;
+}
+
 function canStartCupForAgent(engine, cup) {
   const current = engine?.state?.currentCup;
   return !(current && !current.closed && current.id !== cup?.id);
@@ -676,13 +702,31 @@ const AI_ORDER_PROJECTION_KEYS = [
   'cupType',
   'color',
   // 装饰物是外观，跟杯型颜色同级；不挂进来，AI 点单时看不见杯口那圈盐。
-  'garnishes'
+  'garnishes',
+  // 吧台手册的详细介绍。只有调酒台打开「详细介绍给 Agent 看」全局开关时才有。
+  'detail'
 ];
 const PUBLIC_BEFORE_PROJECTION_KEYS = ['claimedName', 'intro', 'cupType', 'color', 'garnishes'];
 const PUBLIC_AFTER_PROJECTION_KEYS = ['flavorDescription', 'finish', 'actualEffectDescription'];
 
 function pickProjection(source, keys) {
   return Object.fromEntries(keys.filter((key) => source?.[key] !== undefined).map((key) => [key, source[key]]));
+}
+
+// 手册文本是仓库里写死的，不是用户输入，不走 sanitize；只认开关。
+function manualDetailForAgent(cup) {
+  if (catalog.detailForAgent !== true) return '';
+  // 存入酒单的特调：用调酒台写的详细介绍；固定酒：用吧台手册。
+  if (cup.description) return cup.description;
+  const man = manualFor(cup.claimedName);
+  if (!man) return '';
+  return [man.palate, man.finish, man.occasion].filter(Boolean).join('\n');
+}
+
+// 推给 Agent 的今日酒单：只列名字、id 和简介，细节让它自己用 proof_bar 查。
+function pushedMenuText() {
+  const lines = publicMenu().map((item) => `- ${item.name}（${item.id}）${item.intro ? `：${item.intro}` : ''}`);
+  return ['[Proof 今日酒单]', '调酒台把今日酒单递给了你。', ...lines].join('\n');
 }
 
 function aiOrderProjection(cup) {
@@ -707,6 +751,8 @@ function aiOrderProjection(cup) {
     color: cup.color,
     garnishes: cup.garnishes || []
   };
+  const detail = manualDetailForAgent(cup);
+  if (detail) projection.detail = detail;
   return pickProjection(projection, AI_ORDER_PROJECTION_KEYS);
 }
 
@@ -790,9 +836,12 @@ async function createHumanOffer(payload) {
     if (!fin.ok) throw Object.assign(new Error(fin.error), { status: 400 });
     finish = fin.value;
   }
-  const cup = base && name === base.claimedName && sameRecipe(parts, base.recipe) && (!payload.cupType || payload.cupType === base.cupType)
+  const method = payload.method == null || payload.method === '' ? undefined : payload.method;
+  if (method && !['stir', 'shake'].includes(method)) throw Object.assign(new Error('invalid_method'), { status: 400 });
+  // 效果时长只属于存进酒单的酒：递存好的酒时跟着 base 走；临时调的一杯不带。
+  const cup = base && name === base.claimedName && sameRecipe(parts, base.recipe) && (!payload.cupType || payload.cupType === base.cupType) && (!method || method === base.method)
     ? base
-    : buildFromParts(name, parts, { kind: 'custom', listed: false, intro, finish, garnishes: validateGarnishes(payload.garnishes) });
+    : buildFromParts(name, parts, { kind: 'custom', listed: false, intro, finish, method, garnishes: validateGarnishes(payload.garnishes) });
   if (payload.cupType) cup.cupType = payload.cupType;
   // 接口约定：公开链接不预绑定接收者，按单杯、单 offer 隔离结算。
   // 每个公开 offer 使用独立的一次性引擎；结果不写入任何 Agent 持久引擎，也不写共享匿名引擎。
@@ -808,9 +857,31 @@ async function createHumanOffer(payload) {
   return { ok: true, offerId, name, link: publicLink(capabilityToken) };
 }
 
+// 特调的效果半衰期（分钟）。不填 = 默认；填了但不合法 = 报错，不悄悄改成默认。
+function effectHalfLifeFrom(payload) {
+  const raw = payload.effectHalfLifeMin;
+  if (raw == null || raw === '') return undefined;
+  const value = normalizeEffectHalfLife(raw);
+  if (value == null) throw Object.assign(new Error('invalid_effect_half_life'), { status: 400 });
+  return value;
+}
+
 function customItem(id) { return catalog.drinks.find((item) => item.id === id); }
+// 特调的详细介绍：比简介长，可以提到原料；仍然挡指令样文本。超长直接报错，不悄悄替换。
+const DETAIL_MAX = 300;
+function sanitizeDetail(value) {
+  const text = normalizeUntrusted(value);
+  if (!text) return '';
+  if (text.length > DETAIL_MAX) throw Object.assign(new Error('detail_too_long'), { status: 400 });
+  if (looksLikeInstruction(value)) throw Object.assign(new Error('detail_rejected'), { status: 400 });
+  return text;
+}
+
 function sanitizePatch(value) {
   const patch = {};
+  // 简介超长以前会被悄悄换成默认句；提案这条路改成直接报错，让调酒台知道。
+  if (value.intro != null && normalizeUntrusted(value.intro).length > INTRO_MAX) throw Object.assign(new Error('intro_too_long'), { status: 400 });
+  if (value.description != null) patch.description = sanitizeDetail(value.description);
   if (value.intro != null) patch.intro = sanitizeIntro(value.intro, { ingredientIds: Object.keys(ingredients) });
   if (value.finish != null) {
     const fin = sanitizeFinish(value.finish, { ingredientIds: Object.keys(ingredients) });
@@ -843,14 +914,17 @@ async function saveCustomDrink(payload) {
     if (!fin.ok) throw Object.assign(new Error(fin.error), { status: 400 });
     finish = fin.value;
   }
-  const cup = buildFromParts(name, parts, { kind: 'menu', listed: true, intro, finish, garnishes });
+  const method = payload.method == null || payload.method === '' ? undefined : payload.method;
+  if (method && !['stir', 'shake'].includes(method)) throw Object.assign(new Error('invalid_method'), { status: 400 });
+  const effectHalfLifeMin = effectHalfLifeFrom(payload);
+  const cup = buildFromParts(name, parts, { kind: 'menu', listed: true, intro, finish, method, effectHalfLifeMin, garnishes });
   const cupTypes = { '子弹杯': 90, '矮球杯': 300, '高球杯': 350, '鸡尾酒杯': 250, '碟形杯': 200, '大杯': 500 };
   if (payload.cupType) { if (!cupTypes[payload.cupType] || cup.totalVolume > cupTypes[payload.cupType]) throw Object.assign(new Error('cup_overflow'), { status: 400 }); cup.cupType = payload.cupType; }
   cup.id = `saved-${randomUUID()}`;
   catalog.drinks.push({ id: cup.id, cup, createdAt: Date.now(), updatedAt: Date.now() });
   catalog.visibility[cup.id] = true;
   await persist();
-  return { ok: true, drink: { id: cup.id, name: cup.claimedName, intro: cup.intro, cupType: cup.cupType, color: cup.color } };
+  return { ok: true, drink: { id: cup.id, name: cup.claimedName, intro: cup.intro, cupType: cup.cupType, method: cup.method || null, effectHalfLifeMin: cup.effectHalfLifeMin || null, color: cup.color } };
 }
 
 // 无参数 reset 的默认语义：清当前影响与持续注入（敏感度保留）。
@@ -955,7 +1029,7 @@ const server = http.createServer(async (req, res) => {
       });
       return json(res, 200, { agents, ...writeAuthStatus(!!admin, adminSecrets.configured) });
     }
-    if (req.method === 'GET' && url.pathname === '/human/menu') return json(res, 200, { drinks: catalog.drinks.filter((item) => !isReservedMenuEntry(item.cup)).map((item) => ({ id: item.id, name: item.cup.claimedName, intro: item.cup.intro, cupType: item.cup.cupType, color: item.cup.color, effects: item.cup.effects || {}, recipe: item.cup.recipe || [] })), visibility: catalog.visibility });
+    if (req.method === 'GET' && url.pathname === '/human/menu') return json(res, 200, { drinks: catalog.drinks.filter((item) => !isReservedMenuEntry(item.cup)).map((item) => ({ id: item.id, name: item.cup.claimedName, intro: item.cup.intro, description: item.cup.description || '', cupType: item.cup.cupType, method: item.cup.method || null, effectHalfLifeMin: item.cup.effectHalfLifeMin || null, color: item.cup.color, effects: item.cup.effects || {}, recipe: item.cup.recipe || [] })), visibility: catalog.visibility, detailForAgent: catalog.detailForAgent });
     if (req.method === 'GET' && url.pathname === '/human/offers') {
       if (expirePublicOffers()) await persist();
       return json(res, 200, { offers: humanOffers() });
@@ -976,6 +1050,14 @@ const server = http.createServer(async (req, res) => {
       return json(res, 409, { ok: false, error: 'capability_spent' });
     }
     if (req.method === 'POST' && url.pathname === '/human/menu') return json(res, 201, await saveCustomDrink(await body(req)));
+    if (req.method === 'PATCH' && url.pathname === '/human/detail-for-agent') {
+      catalog.detailForAgent = (await body(req)).visible === true; await persist(); return json(res, 200, { ok: true, visible: catalog.detailForAgent });
+    }
+    if (req.method === 'POST' && url.pathname === '/human/menu-push') {
+      const targetId = String((await body(req)).targetId || '');
+      if (!AGENTS.some((agent) => agent.id === targetId)) return json(res, 404, { ok: false, error: 'unknown_agent' });
+      catalog.menuPush[targetId] = Date.now(); await persist(); return json(res, 200, { ok: true });
+    }
     match = /^\/human\/visibility\/([^/]+)$/.exec(url.pathname);
     if (match && req.method === 'PATCH') {
       const visibilityId = decodeURIComponent(match[1]);
@@ -1106,7 +1188,50 @@ const server = http.createServer(async (req, res) => {
           proposals: catalog.proposals.filter((p) => p.targetId === agent.id && p.status === 'pending'),
           stateInjection: turn.injected ? turn.block : null,
           stateInjectionEnabled: eng.isInjectionEnabled(),
-          hasState: turn.hasState === true
+          hasState: turn.hasState === true,
+          // 分口喝时手里那杯：还剩几口、多久不喝会被撤掉。没有就是 null。
+          cupInHand: eng.sippingCup(Date.now()),
+          // 吧台上搁着的杯（喝了一半换别的时放下的）：还剩几口、多久后被收走。
+          cupsOnBar: eng.shelvedCups(Date.now())
+        });
+      }
+      // 接着喝手里那杯（分口喝）。默认一口。
+      // 带 offerId 就喝指定那杯：可以是手里那杯，也可以是吧台上搁着的（端回来，手里那杯换上吧台）。
+      if (req.method === 'POST' && url.pathname === '/agent/sip') {
+        const payload = await body(req);
+        if (payload.agentId && payload.agentId !== agent.id) return json(res, 403, { ok: false, error: 'forbidden' });
+        const eng = engineFor(agent.id);
+        const sipMouths = mouthsFrom(payload) ?? 1;
+        const now = Date.now();
+        let sipOfferId;
+        if (payload.offerId != null && payload.offerId !== '') {
+          sipOfferId = String(payload.offerId);
+          const target = eng.offers.get(sipOfferId);
+          const onBar = eng.shelvedCups(now).some((row) => row.offerId === sipOfferId);
+          const inHand = eng.sippingCup(now)?.offerId === sipOfferId;
+          if (!target || target.drinkerId !== agent.id || (!onBar && !inHand)) {
+            const gone = target?.drinkerId === agent.id && target.status === 'expired';
+            return json(res, gone ? 409 : 404, { ok: false, error: gone ? 'cup_expired' : 'cup_not_on_bar' });
+          }
+        } else {
+          const held = eng.sippingCup(now);
+          if (!held) return json(res, 404, { ok: false, error: 'no_cup_in_hand' });
+          sipOfferId = held.offerId;
+        }
+        const heldOffer = eng.offers.get(sipOfferId);
+        const result = eng.drinkOffer(sipOfferId, agent.id, req.headers['idempotency-key'] || randomUUID(), now, { mouths: sipMouths });
+        if (!result.ok) { await persist(); return json(res, 409, { ok: false, error: result.error }); }
+        rememberAudit(auditRecord({ actorType: 'agent', actorId: agent.id, targetId: agent.id, action: 'sip', result: true }));
+        await persist();
+        return json(res, 200, {
+          ok: true,
+          offerId: sipOfferId,
+          idempotent: !!result.idempotent,
+          ...sipInfo(result),
+          projection: agentAfterDrinkProjection(result.projection, heldOffer?.cup, result.eval),
+          events: compactAgentEvents(result.events || []),
+          states: compactAgentEvents(result.states || result.eval?.presentation?.states || []),
+          framing: framingForDrink(heldOffer?.cup?.claimedName, result.events || [], heldOffer?.cup?.agentBeliefs || [], result.eval)
         });
       }
       // Agent 自主进酒吧饮用：不需要先生成 Link。
@@ -1119,14 +1244,18 @@ const server = http.createServer(async (req, res) => {
         const eng = engineFor(agent.id);
         const cup = visibleMenuCups().find((c) => c.id === wanted || c.claimedName === wanted || c.id === `cup-${wanted}`) || null;
         if (!cup) return json(res, 404, { ok: false, error: 'drink_not_found' });
+        const menuMouths = mouthsFrom(payload);
+        // 手里有半杯：先搁到吧台上再开新杯（没喝的口留着，70 分钟内能端回来）。
+        const menuPutDown = eng.putDownCup(Date.now());
         if (!canStartCupForAgent(eng, cup)) return json(res, 409, { ok: false, error: 'cannot_drink_now' });
         const offerId = eng.createOffer(cup, PUBLIC_MIXER_ID, PUBLIC_MIXER_ID, agent.id, Date.now());
-        const result = eng.drinkOffer(offerId, agent.id, `menu-${cup.id}-${randomUUID()}`, Date.now());
-        if (!result.ok) return json(res, 409, { ok: false, error: result.error });
+        const result = eng.drinkOffer(offerId, agent.id, `menu-${cup.id}-${randomUUID()}`, Date.now(), { mouths: menuMouths });
+        if (!result.ok) { abortAgentOffer(eng, offerId); return json(res, 409, { ok: false, error: result.error }); }
         await persist();
         return json(res, 200, {
           ok: true,
           offerId,
+          ...sipInfo(result, menuPutDown || result.putDown),
           revision: eng.state.revision || 0,
           projection: agentAfterDrinkProjection(result.projection, cup, result.eval),
           events: compactAgentEvents(result.events || []),
@@ -1135,7 +1264,13 @@ const server = http.createServer(async (req, res) => {
         });
       }
       if (req.method === 'GET' && url.pathname === '/agent/turn-context') {
-        return json(res, 200, turnContextFor(agent.id, Date.now()));
+        const turn = turnContextFor(agent.id, Date.now());
+        if (!catalog.menuPush[agent.id]) return json(res, 200, turn);
+        // 推送只送一次：送出即清。只走 turn-context（hook / proof_turn_context），Gateway 不带。
+        delete catalog.menuPush[agent.id]; await persist();
+        const menuText = pushedMenuText();
+        const text = turn.injected && turn.block?.text ? `${turn.block.text}\n\n${menuText}` : menuText;
+        return json(res, 200, { ...turn, injected: true, block: { ...(turn.block || {}), text }, menuPushed: true });
       }
       if (req.method === 'GET' && (url.pathname === '/agent/gateway' || url.pathname === '/agent/gateway/status')) {
         // 安全诊断：不含密钥、聊天正文、内部提示词或其他 Agent 数据
@@ -1234,9 +1369,10 @@ const server = http.createServer(async (req, res) => {
         if (!publicEngine || !publicOffer || publicOffer.status !== 'open') return json(res, 409, { ok: false, error: 'capability_spent' });
         const agentEngine = engineFor(agent.id);
         const claimNow = Date.now();
+        const claimMouths = mouthsFrom(payload);
         const claimedCup = cupWithAgentBeliefs(publicOffer.cup, payload.beliefs);
         const claimedOfferId = agentEngine.createOffer(claimedCup, PUBLIC_MIXER_ID, PUBLIC_MIXER_ID, agent.id, claimNow);
-        const result = agentEngine.drinkOffer(claimedOfferId, agent.id, `claim-${entry.offerId}`, claimNow);
+        const result = agentEngine.drinkOffer(claimedOfferId, agent.id, `claim-${entry.offerId}`, claimNow, { mouths: claimMouths });
         if (!result.ok) {
           // **只有真的喝下去，Link 才算被消费。**
           // 旧实现先把 capability 标成 claimed/consumed 再检查结果，于是
@@ -1264,6 +1400,7 @@ const server = http.createServer(async (req, res) => {
           ok: true,
           claimed: true,
           offerId: claimedOfferId,
+          ...sipInfo(result),
           capabilityOfferId: entry.offerId,
           idempotent: false,
           projection: agentAfterDrinkProjection(result.projection, claimedCup, result.eval),
@@ -1279,8 +1416,10 @@ const server = http.createServer(async (req, res) => {
       if (match && req.method === 'POST' && match[2] === 'drink') {
         const payload = await body(req);
         const pendingOffer = engine.offers.get(match[1]);
-        if (pendingOffer?.cup) pendingOffer.cup.agentBeliefs = sanitizeAgentBeliefs(payload.beliefs);
-        const result = engine.drinkOffer(match[1], agent.id, req.headers['idempotency-key'] || randomUUID(), Date.now());
+        const offerMouths = mouthsFrom(payload);
+        // 信念只在第一口前定；接着喝的时候不覆盖。
+        if (pendingOffer?.cup && pendingOffer.status === 'open') pendingOffer.cup.agentBeliefs = sanitizeAgentBeliefs(payload.beliefs);
+        const result = engine.drinkOffer(match[1], agent.id, req.headers['idempotency-key'] || randomUUID(), Date.now(), { mouths: offerMouths });
         if (result.ok) {
           for (const cap of catalog.capabilities) {
             if (cap.offerId === match[1]) delete cap.token;
@@ -1291,6 +1430,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, {
           ok: true,
           idempotent: !!result.idempotent,
+          ...sipInfo(result),
           projection: agentAfterDrinkProjection(result.projection, pendingOffer?.cup, result.eval),
           events: compactAgentEvents(result.events || []),
           states: compactAgentEvents(result.states || result.eval?.presentation?.states || []),

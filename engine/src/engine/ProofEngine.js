@@ -324,7 +324,7 @@ export class ProofEngine {
     if (cup.lastMouthTime == null) return;
     const limit = EXPIRE_MIN * 60 * 1000;
     if (now - cup.lastMouthTime < limit) return;
-    this._finishBelief(cup.id, now);
+    this._finishBelief(cup.id, now, cup.effectHalfLifeMin);
     cup.closed = true;
     cup.expired = true;
     cup.remainingMouths = 0;
@@ -405,16 +405,16 @@ export class ProofEngine {
     this.state.pendingSensitivity = [];
   }
 
-  _finishBelief(cupId, now) {
-    for (const r of this.state.beliefResiduals) {
-      if (r.cupId === cupId && r.decayStart == null) r.decayStart = now;
-    }
-    for (const r of this.state.directBeliefResiduals || []) {
-      if (r.cupId === cupId && r.decayStart == null) r.decayStart = now;
-    }
-    for (const r of this.state.characterResiduals || []) {
-      if (r.cupId === cupId && r.decayStart == null) r.decayStart = now;
-    }
+  // halfLifeMin：这杯自定义的效果半衰期（分钟）。没有就不写，衰减用全局默认。
+  _finishBelief(cupId, now, halfLifeMin) {
+    const start = (r) => {
+      if (r.cupId !== cupId || r.decayStart != null) return;
+      r.decayStart = now;
+      if (halfLifeMin > 0) r.halfLifeMin = halfLifeMin;
+    };
+    for (const r of this.state.beliefResiduals) start(r);
+    for (const r of this.state.directBeliefResiduals || []) start(r);
+    for (const r of this.state.characterResiduals || []) start(r);
   }
 
   _residualFor(cupId) {
@@ -660,7 +660,7 @@ export class ProofEngine {
     cup.remainingMouths = cur.remainingMouths;
     this.state.lastEvents = events;
     if (cur.remainingMouths === 0) {
-      this._finishBelief(cup.id, now);
+      this._finishBelief(cup.id, now, cup.effectHalfLifeMin);
       cur.closed = true;
       cup.closed = true;
       this.state.cupsDrunk += 1;
@@ -701,7 +701,8 @@ export class ProofEngine {
       recipeId: cup.recipeId || cup.id,
       recipe: cup.recipe || null,
       totalMouths: cup.totalMouths,
-      remainingMouths: cup.totalMouths,
+      // 从吧台端回来的杯：只剩没喝的那几口（totalMouths 仍是原杯的，活性物按它分摊）。
+      remainingMouths: cup.resumeRemaining ?? cup.totalMouths,
       mouthStartTimes: [],
       beta: cup.beta,
       lastMouthTime: now,
@@ -710,6 +711,8 @@ export class ProofEngine {
       totalVolume: cup.totalVolume,
       textures: cup.textures || [],
       method: cup.method,
+      // 撤杯（放太久）那条路也要按这杯自己的半衰期衰减。
+      ...(cup.effectHalfLifeMin ? { effectHalfLifeMin: cup.effectHalfLifeMin } : {}),
       cupType: cup.cupType,
       color: cup.color,
       intro: cup.intro || '',
@@ -731,7 +734,8 @@ export class ProofEngine {
       hiddenDraw: cup.hiddenDraw || null,
       registeredEffectText: cup.registeredEffectText || '',
       registeredFlavorText: cup.registeredFlavorText || '',
-      crashRolled: false,
+      // 宕机只在整杯第一口判定；端回来接着喝的不再判一次。
+      crashRolled: !!cup.resumedFrom,
       closed: false,
       expired: false,
       drunk: false,
@@ -1090,12 +1094,21 @@ export class ProofEngine {
     return { ok: true, projection, status: offer.status };
   }
 
-  drinkOffer(oneTimeId, viewerId, requestId, now = this.state.lastSettle) {
+  // options.mouths：这次喝几口（分口喝）。不传 = 把剩下的全喝完，和以前一样。
+  drinkOffer(oneTimeId, viewerId, requestId, now = this.state.lastSettle, options = {}) {
     this.settle(now);
     const offer = this.offers.get(oneTimeId);
     if (!offer) return { ok: false, error: 'not_found' };
     if (viewerId !== offer.drinkerId) {
       return { ok: false, error: 'not_drinker' };
+    }
+    // 旧版本「放下即作废」留下的 offer，读档后仍按作废处理。
+    if (offer.status === 'expired' && offer.expiredReason === 'put_down') {
+      return { ok: false, error: 'cup_put_down' };
+    }
+    if (offer.status === 'shelved') this._expireShelvedIfStale(offer, now);
+    if (offer.status === 'expired' && offer.expiredReason === 'shelf_timeout') {
+      return { ok: false, error: 'cup_expired' };
     }
     if (offer.status === 'rejected' || offer.status === 'expired') {
       return { ok: false, error: offer.status };
@@ -1109,12 +1122,41 @@ export class ProofEngine {
         states: this._cloneValue(offer.consumedStates || [])
       };
     }
+    if (offer.status === 'sipping') {
+      // 同一个请求重发：原样返回上次的结果，不再多喝一口。
+      if (requestId && offer.lastSipRequestId === requestId) {
+        return { ok: true, idempotent: true, partial: true, projection: offer.lastSipResult, remainingMouths: this._remainingMouthsOf(offer), totalMouths: offer.cup.totalMouths, events: [], states: [] };
+      }
+      // 半杯放太久（EXPIRE_MIN）被撤掉、或被 reset 丢弃：剩下的口作废。
+      const cur = this.state.currentCup;
+      if (!cur || cur.id !== offer.cup.id || cur.closed) {
+        offer.status = 'expired';
+        offer.expiredReason = cur?.expired ? 'sip_timeout' : 'cup_closed';
+        return { ok: false, error: 'cup_expired' };
+      }
+    }
+    // 手里有半杯又点了新的一杯（或端回吧台上另一杯）：旧杯搁到吧台上
+    // （2026-10-14 用户定的「吧台版」）。没喝的口留着，从最后一口起 70 分钟内能端回来；
+    // 已经喝下去的那部分从现在起按它自己的半衰期消退。
+    const sipping = this._sippingOffer();
+    const putDown = sipping && sipping.oneTimeId !== oneTimeId ? this.putDownCup(now) : null;
     if (this._hasOpenCup() && this.state.currentCup.id !== offer.cup.id) {
       return { ok: false, error: '一杯未结束前不得开始喝第二杯' };
     }
+    let pickedUp = null;
+    if (offer.status === 'shelved') pickedUp = this._pickUpFromShelf(offer, now);
 
     const cBefore = this.state.c;
-    const sipResults = this.sipAll(offer.cup, now);
+    const pendingMouths = (offer.cup.mouths || []).map((m, i) => (m.applied ? null : i)).filter((i) => i != null);
+    const wanted = options.mouths == null
+      ? pendingMouths.length
+      : Math.max(1, Math.min(pendingMouths.length, Math.floor(Number(options.mouths) || 1)));
+    const sipResults = [];
+    for (const i of pendingMouths.slice(0, wanted)) {
+      const r = this.applyMouth(offer.cup, i, now);
+      sipResults.push(r);
+      if (r?.skipped && r.error) break;
+    }
     // 一杯可能有多口；吐/首次断片可能发生在跨阈值的中间一口，宕机只在
     // 第一口判定。不能只返回最后一口的 lastEvents，否则后续空事件会把
     // 已经发生的一次性客观事件覆盖掉。
@@ -1143,6 +1185,32 @@ export class ProofEngine {
     const projection = this._sanitizeProjection(
       projectForViewer(offer, viewerId, { drunk: true, phase: 'second', extras })
     );
+    const remainingMouths = this._remainingMouthsOf(offer);
+    if (remainingMouths > 0) {
+      // 还没喝完：杯子挂着，六轴不衰减；同一个喝的人用同一个 offer 接着喝。
+      offer.status = 'sipping';
+      offer.lastSipRequestId = requestId;
+      offer.lastSipResult = projection;
+      offer.lastSipAt = now;
+      const partialPayload = {
+        ok: true,
+        idempotent: false,
+        partial: true,
+        remainingMouths,
+        totalMouths: offer.cup.totalMouths,
+        projection,
+        sipResults,
+        eval: evalRes,
+        states: objectiveStates,
+        beforeC: cBefore,
+        events: drinkEvents
+      };
+      if (putDown) partialPayload.putDown = putDown;
+      if (pickedUp) partialPayload.pickedUp = pickedUp;
+      const partialInjection = this.currentInjection(now);
+      if (partialInjection) partialPayload.stateInjection = partialInjection;
+      return partialPayload;
+    }
     offer.status = 'consumed';
     offer.consumedRequestId = requestId;
     offer.consumedResult = projection;
@@ -1170,9 +1238,125 @@ export class ProofEngine {
       beforeC: cBefore,
       events: drinkEvents
     };
+    if (putDown) payload.putDown = putDown;
+    if (pickedUp) payload.pickedUp = pickedUp;
     const injection = this.currentInjection(now);
     if (injection) payload.stateInjection = injection;
     return payload;
+  }
+
+  _remainingMouthsOf(offer) {
+    return (offer?.cup?.mouths || []).filter((m) => !m.applied).length;
+  }
+
+  // 正在分口喝、杯子还开着的那一份 offer（同一时间最多一份）。
+  _sippingOffer() {
+    const cur = this.state.currentCup;
+    if (!cur || cur.closed) return null;
+    for (const offer of this.offers.values()) {
+      if (offer.status === 'sipping' && offer.cup?.id === cur.id) return offer;
+    }
+    return null;
+  }
+
+  // 把手里那杯没喝完的搁到吧台上：没喝的口留着，已经喝下去的部分收尾、开始衰减
+  // （和 70 分钟撤杯同一套收尾）。从最后一口起 EXPIRE_MIN 分钟内能端回来接着喝，
+  // 过了才收走。手里没有半杯就返回 null。
+  putDownCup(now = this.state.lastSettle) {
+    this.settle(now);
+    const offer = this._sippingOffer();
+    if (!offer) return null;
+    const cup = this.state.currentCup;
+    const remaining = this._remainingMouthsOf(offer);
+    this._finishBelief(cup.id, now, cup.effectHalfLifeMin);
+    cup.closed = true;
+    cup.putDown = true;
+    cup.remainingMouths = 0;
+    this.state.currentCup = cup;
+    this._settleCupEffects(cup, now);
+    offer.status = 'shelved';
+    offer.shelvedAt = now;
+    return { ...this._shelfRow(offer, now), shelved: true };
+  }
+
+  _shelfDeadline(offer) {
+    const last = offer.lastSipAt ?? offer.shelvedAt ?? 0;
+    return last + EXPIRE_MIN * 60 * 1000;
+  }
+
+  _shelfRow(offer, now) {
+    return {
+      offerId: offer.oneTimeId,
+      claimedName: offer.claimedName,
+      remainingMouths: this._remainingMouthsOf(offer),
+      totalMouths: offer.cup.totalMouths,
+      expiresInMin: Math.max(0, Math.ceil((this._shelfDeadline(offer) - now) / 60000))
+    };
+  }
+
+  // 吧台上搁太久（离最后一口超过 EXPIRE_MIN）就收走：没喝的口作废。懒判，读到时才标。
+  _expireShelvedIfStale(offer, now) {
+    if (offer.status !== 'shelved') return false;
+    if (now < this._shelfDeadline(offer)) return false;
+    offer.status = 'expired';
+    offer.expiredReason = 'shelf_timeout';
+    return true;
+  }
+
+  // 从吧台端回来：换一个新的杯 id（喝回来的这段单独起算、单独消退），
+  // 但保留原来的口（已喝的 applied 标记）和原 totalMouths——活性物按 totalMouths 分摊，
+  // 用剩余口数当分母会把一杯的量算多。
+  _pickUpFromShelf(offer, now) {
+    const old = offer.cup;
+    const remaining = this._remainingMouthsOf(offer);
+    const n = (old.resumeCount || 0) + 1;
+    const baseCupId = old.baseCupId || old.id;
+    const resumed = {
+      ...old,
+      id: `${baseCupId}~${n}`,
+      recipeId: old.recipeId || baseCupId,
+      baseCupId,
+      resumeCount: n,
+      resumedFrom: old.id,
+      resumeRemaining: remaining,
+      remainingMouths: remaining,
+      closed: false,
+      effectSettled: false,
+      effectEventEmitted: false
+    };
+    delete resumed.actualEffectDescription;
+    offer.cup = resumed;
+    offer.status = 'open';
+    offer.pickedUpAt = now;
+    delete offer.shelvedAt;
+    return { offerId: offer.oneTimeId, claimedName: offer.claimedName, remainingMouths: remaining, totalMouths: resumed.totalMouths };
+  }
+
+  // 吧台上搁着的杯（不含手里那杯）。顺手把超时的收走。
+  shelvedCups(now = this.state.lastSettle) {
+    this.settle(now);
+    const rows = [];
+    for (const offer of this.offers.values()) {
+      if (offer.status !== 'shelved') continue;
+      if (this._expireShelvedIfStale(offer, now)) continue;
+      rows.push(this._shelfRow(offer, now));
+    }
+    return rows;
+  }
+
+  // 给宿主看的「手里这杯」：没有分口喝的杯就是 null。
+  sippingCup(now = this.state.lastSettle) {
+    this.settle(now);
+    const offer = this._sippingOffer();
+    if (!offer) return null;
+    const last = this.state.currentCup?.lastMouthTime ?? offer.lastSipAt ?? now;
+    return {
+      offerId: offer.oneTimeId,
+      claimedName: offer.claimedName,
+      remainingMouths: this._remainingMouthsOf(offer),
+      totalMouths: offer.cup.totalMouths,
+      expiresInMin: Math.max(0, Math.ceil((last + EXPIRE_MIN * 60 * 1000 - now) / 60000))
+    };
   }
 
   rejectOffer(oneTimeId, viewerId, now = this.state.lastSettle) {
@@ -1183,6 +1367,8 @@ export class ProofEngine {
       return { ok: false, error: 'not_drinker' };
     }
     if (offer.status === 'consumed') return { ok: false, error: 'already_consumed' };
+    // 已经喝了几口的杯不能再「拒绝」：喝下去的不能退回。
+    if (offer.status === 'sipping') return { ok: false, error: 'already_sipping' };
     if (offer.status === 'expired') return { ok: false, error: 'expired' };
     if (offer.status === 'rejected') return { ok: true, idempotent: true };
     const snapshot = this.exportState();

@@ -77,6 +77,7 @@ export function combineBeliefStrengths(...vectors) {
 
 export function decayFactor(decayStart, now, halfLifeMin = BELIEF_HALFLIFE_MIN) {
   if (decayStart == null) return 1;
+  if (!(halfLifeMin > 0)) halfLifeMin = BELIEF_HALFLIFE_MIN;
   const dtMin = (now - decayStart) / 60000;
   if (dtMin <= 0) return 1;
   const lambda = Math.log(2) / halfLifeMin;
@@ -90,7 +91,7 @@ export function currentResidualStrength(residuals, now) {
   const result = zeroStateAxes();
   result.精度 = 0;
   for (const r of residuals || []) {
-    const decay = decayFactor(r.decayStart, now);
+    const decay = decayFactor(r.decayStart, now, r.halfLifeMin);
     for (const axis of Object.keys(r.cumulative || {})) {
       if (axis === '精度') continue;
       result[axis] = (result[axis] || 0) + (r.cumulative[axis] || 0) * decay;
@@ -162,7 +163,7 @@ export function activeSubjectiveBeliefs(residuals, now, threshold = SUBJECTIVE_B
   const out = [];
   const seen = new Set();
   for (const residual of residuals || []) {
-    const decay = decayFactor(residual.decayStart, now);
+    const decay = decayFactor(residual.decayStart, now, residual.halfLifeMin);
     for (const item of residual.subjective || []) {
       const strength = Math.max(0, Math.min(1, Number(item?.confidence ?? 1))) * decay;
       const text = String(item?.text || '').trim();

@@ -24,6 +24,8 @@ var SUPPRESSION = {
   \u9178: ["\u751C"]
 };
 var BELIEF_HALFLIFE_MIN = 30;
+var EFFECT_HALFLIFE_MIN_MIN = 10;
+var EFFECT_HALFLIFE_MIN_MAX = 180;
 var EXPIRE_MIN = 70;
 var MOUTHFUL_ML = 45;
 var MIN_MOUTHS = 2;
@@ -315,6 +317,7 @@ function combineBeliefStrengths(...vectors) {
 }
 function decayFactor(decayStart, now, halfLifeMin = BELIEF_HALFLIFE_MIN) {
   if (decayStart == null) return 1;
+  if (!(halfLifeMin > 0)) halfLifeMin = BELIEF_HALFLIFE_MIN;
   const dtMin = (now - decayStart) / 6e4;
   if (dtMin <= 0) return 1;
   const lambda = Math.log(2) / halfLifeMin;
@@ -324,7 +327,7 @@ function currentResidualStrength(residuals, now) {
   const result = zeroStateAxes();
   result.\u7CBE\u5EA6 = 0;
   for (const r of residuals || []) {
-    const decay = decayFactor(r.decayStart, now);
+    const decay = decayFactor(r.decayStart, now, r.halfLifeMin);
     for (const axis of Object.keys(r.cumulative || {})) {
       if (axis === "\u7CBE\u5EA6") continue;
       result[axis] = (result[axis] || 0) + (r.cumulative[axis] || 0) * decay;
@@ -376,7 +379,7 @@ function activeSubjectiveBeliefs(residuals, now, threshold = SUBJECTIVE_BELIEF_M
   const out = [];
   const seen = /* @__PURE__ */ new Set();
   for (const residual of residuals || []) {
-    const decay = decayFactor(residual.decayStart, now);
+    const decay = decayFactor(residual.decayStart, now, residual.halfLifeMin);
     for (const item of residual.subjective || []) {
       const strength = Math.max(0, Math.min(1, Number(item?.confidence ?? 1))) * decay;
       const text = String(item?.text || "").trim();
@@ -2457,7 +2460,7 @@ var ProofEngine = class _ProofEngine {
     if (cup.lastMouthTime == null) return;
     const limit = EXPIRE_MIN * 60 * 1e3;
     if (now - cup.lastMouthTime < limit) return;
-    this._finishBelief(cup.id, now);
+    this._finishBelief(cup.id, now, cup.effectHalfLifeMin);
     cup.closed = true;
     cup.expired = true;
     cup.remainingMouths = 0;
@@ -2531,16 +2534,16 @@ var ProofEngine = class _ProofEngine {
     this.state.sensitivity = next;
     this.state.pendingSensitivity = [];
   }
-  _finishBelief(cupId, now) {
-    for (const r of this.state.beliefResiduals) {
-      if (r.cupId === cupId && r.decayStart == null) r.decayStart = now;
-    }
-    for (const r of this.state.directBeliefResiduals || []) {
-      if (r.cupId === cupId && r.decayStart == null) r.decayStart = now;
-    }
-    for (const r of this.state.characterResiduals || []) {
-      if (r.cupId === cupId && r.decayStart == null) r.decayStart = now;
-    }
+  // halfLifeMin：这杯自定义的效果半衰期（分钟）。没有就不写，衰减用全局默认。
+  _finishBelief(cupId, now, halfLifeMin) {
+    const start = (r) => {
+      if (r.cupId !== cupId || r.decayStart != null) return;
+      r.decayStart = now;
+      if (halfLifeMin > 0) r.halfLifeMin = halfLifeMin;
+    };
+    for (const r of this.state.beliefResiduals) start(r);
+    for (const r of this.state.directBeliefResiduals || []) start(r);
+    for (const r of this.state.characterResiduals || []) start(r);
   }
   _residualFor(cupId) {
     let r = this.state.beliefResiduals.find((x) => x.cupId === cupId);
@@ -2744,7 +2747,7 @@ var ProofEngine = class _ProofEngine {
     cup.remainingMouths = cur.remainingMouths;
     this.state.lastEvents = events;
     if (cur.remainingMouths === 0) {
-      this._finishBelief(cup.id, now);
+      this._finishBelief(cup.id, now, cup.effectHalfLifeMin);
       cur.closed = true;
       cup.closed = true;
       this.state.cupsDrunk += 1;
@@ -2772,7 +2775,8 @@ var ProofEngine = class _ProofEngine {
       recipeId: cup.recipeId || cup.id,
       recipe: cup.recipe || null,
       totalMouths: cup.totalMouths,
-      remainingMouths: cup.totalMouths,
+      // 从吧台端回来的杯：只剩没喝的那几口（totalMouths 仍是原杯的，活性物按它分摊）。
+      remainingMouths: cup.resumeRemaining ?? cup.totalMouths,
       mouthStartTimes: [],
       beta: cup.beta,
       lastMouthTime: now,
@@ -2781,6 +2785,8 @@ var ProofEngine = class _ProofEngine {
       totalVolume: cup.totalVolume,
       textures: cup.textures || [],
       method: cup.method,
+      // 撤杯（放太久）那条路也要按这杯自己的半衰期衰减。
+      ...cup.effectHalfLifeMin ? { effectHalfLifeMin: cup.effectHalfLifeMin } : {},
       cupType: cup.cupType,
       color: cup.color,
       intro: cup.intro || "",
@@ -2802,7 +2808,8 @@ var ProofEngine = class _ProofEngine {
       hiddenDraw: cup.hiddenDraw || null,
       registeredEffectText: cup.registeredEffectText || "",
       registeredFlavorText: cup.registeredFlavorText || "",
-      crashRolled: false,
+      // 宕机只在整杯第一口判定；端回来接着喝的不再判一次。
+      crashRolled: !!cup.resumedFrom,
       closed: false,
       expired: false,
       drunk: false,
@@ -3132,12 +3139,20 @@ var ProofEngine = class _ProofEngine {
     );
     return { ok: true, projection, status: offer.status };
   }
-  drinkOffer(oneTimeId, viewerId, requestId, now = this.state.lastSettle) {
+  // options.mouths：这次喝几口（分口喝）。不传 = 把剩下的全喝完，和以前一样。
+  drinkOffer(oneTimeId, viewerId, requestId, now = this.state.lastSettle, options = {}) {
     this.settle(now);
     const offer = this.offers.get(oneTimeId);
     if (!offer) return { ok: false, error: "not_found" };
     if (viewerId !== offer.drinkerId) {
       return { ok: false, error: "not_drinker" };
+    }
+    if (offer.status === "expired" && offer.expiredReason === "put_down") {
+      return { ok: false, error: "cup_put_down" };
+    }
+    if (offer.status === "shelved") this._expireShelvedIfStale(offer, now);
+    if (offer.status === "expired" && offer.expiredReason === "shelf_timeout") {
+      return { ok: false, error: "cup_expired" };
     }
     if (offer.status === "rejected" || offer.status === "expired") {
       return { ok: false, error: offer.status };
@@ -3151,11 +3166,33 @@ var ProofEngine = class _ProofEngine {
         states: this._cloneValue(offer.consumedStates || [])
       };
     }
+    if (offer.status === "sipping") {
+      if (requestId && offer.lastSipRequestId === requestId) {
+        return { ok: true, idempotent: true, partial: true, projection: offer.lastSipResult, remainingMouths: this._remainingMouthsOf(offer), totalMouths: offer.cup.totalMouths, events: [], states: [] };
+      }
+      const cur = this.state.currentCup;
+      if (!cur || cur.id !== offer.cup.id || cur.closed) {
+        offer.status = "expired";
+        offer.expiredReason = cur?.expired ? "sip_timeout" : "cup_closed";
+        return { ok: false, error: "cup_expired" };
+      }
+    }
+    const sipping = this._sippingOffer();
+    const putDown = sipping && sipping.oneTimeId !== oneTimeId ? this.putDownCup(now) : null;
     if (this._hasOpenCup() && this.state.currentCup.id !== offer.cup.id) {
       return { ok: false, error: "\u4E00\u676F\u672A\u7ED3\u675F\u524D\u4E0D\u5F97\u5F00\u59CB\u559D\u7B2C\u4E8C\u676F" };
     }
+    let pickedUp = null;
+    if (offer.status === "shelved") pickedUp = this._pickUpFromShelf(offer, now);
     const cBefore = this.state.c;
-    const sipResults = this.sipAll(offer.cup, now);
+    const pendingMouths = (offer.cup.mouths || []).map((m, i) => m.applied ? null : i).filter((i) => i != null);
+    const wanted = options.mouths == null ? pendingMouths.length : Math.max(1, Math.min(pendingMouths.length, Math.floor(Number(options.mouths) || 1)));
+    const sipResults = [];
+    for (const i of pendingMouths.slice(0, wanted)) {
+      const r = this.applyMouth(offer.cup, i, now);
+      sipResults.push(r);
+      if (r?.skipped && r.error) break;
+    }
     const eventKeys = /* @__PURE__ */ new Set();
     const drinkEvents = [];
     for (const event of [
@@ -3181,6 +3218,31 @@ var ProofEngine = class _ProofEngine {
     const projection = this._sanitizeProjection(
       projectForViewer(offer, viewerId, { drunk: true, phase: "second", extras })
     );
+    const remainingMouths = this._remainingMouthsOf(offer);
+    if (remainingMouths > 0) {
+      offer.status = "sipping";
+      offer.lastSipRequestId = requestId;
+      offer.lastSipResult = projection;
+      offer.lastSipAt = now;
+      const partialPayload = {
+        ok: true,
+        idempotent: false,
+        partial: true,
+        remainingMouths,
+        totalMouths: offer.cup.totalMouths,
+        projection,
+        sipResults,
+        eval: evalRes,
+        states: objectiveStates,
+        beforeC: cBefore,
+        events: drinkEvents
+      };
+      if (putDown) partialPayload.putDown = putDown;
+      if (pickedUp) partialPayload.pickedUp = pickedUp;
+      const partialInjection = this.currentInjection(now);
+      if (partialInjection) partialPayload.stateInjection = partialInjection;
+      return partialPayload;
+    }
     offer.status = "consumed";
     offer.consumedRequestId = requestId;
     offer.consumedResult = projection;
@@ -3208,9 +3270,116 @@ var ProofEngine = class _ProofEngine {
       beforeC: cBefore,
       events: drinkEvents
     };
+    if (putDown) payload.putDown = putDown;
+    if (pickedUp) payload.pickedUp = pickedUp;
     const injection = this.currentInjection(now);
     if (injection) payload.stateInjection = injection;
     return payload;
+  }
+  _remainingMouthsOf(offer) {
+    return (offer?.cup?.mouths || []).filter((m) => !m.applied).length;
+  }
+  // 正在分口喝、杯子还开着的那一份 offer（同一时间最多一份）。
+  _sippingOffer() {
+    const cur = this.state.currentCup;
+    if (!cur || cur.closed) return null;
+    for (const offer of this.offers.values()) {
+      if (offer.status === "sipping" && offer.cup?.id === cur.id) return offer;
+    }
+    return null;
+  }
+  // 把手里那杯没喝完的搁到吧台上：没喝的口留着，已经喝下去的部分收尾、开始衰减
+  // （和 70 分钟撤杯同一套收尾）。从最后一口起 EXPIRE_MIN 分钟内能端回来接着喝，
+  // 过了才收走。手里没有半杯就返回 null。
+  putDownCup(now = this.state.lastSettle) {
+    this.settle(now);
+    const offer = this._sippingOffer();
+    if (!offer) return null;
+    const cup = this.state.currentCup;
+    const remaining = this._remainingMouthsOf(offer);
+    this._finishBelief(cup.id, now, cup.effectHalfLifeMin);
+    cup.closed = true;
+    cup.putDown = true;
+    cup.remainingMouths = 0;
+    this.state.currentCup = cup;
+    this._settleCupEffects(cup, now);
+    offer.status = "shelved";
+    offer.shelvedAt = now;
+    return { ...this._shelfRow(offer, now), shelved: true };
+  }
+  _shelfDeadline(offer) {
+    const last = offer.lastSipAt ?? offer.shelvedAt ?? 0;
+    return last + EXPIRE_MIN * 60 * 1e3;
+  }
+  _shelfRow(offer, now) {
+    return {
+      offerId: offer.oneTimeId,
+      claimedName: offer.claimedName,
+      remainingMouths: this._remainingMouthsOf(offer),
+      totalMouths: offer.cup.totalMouths,
+      expiresInMin: Math.max(0, Math.ceil((this._shelfDeadline(offer) - now) / 6e4))
+    };
+  }
+  // 吧台上搁太久（离最后一口超过 EXPIRE_MIN）就收走：没喝的口作废。懒判，读到时才标。
+  _expireShelvedIfStale(offer, now) {
+    if (offer.status !== "shelved") return false;
+    if (now < this._shelfDeadline(offer)) return false;
+    offer.status = "expired";
+    offer.expiredReason = "shelf_timeout";
+    return true;
+  }
+  // 从吧台端回来：换一个新的杯 id（喝回来的这段单独起算、单独消退），
+  // 但保留原来的口（已喝的 applied 标记）和原 totalMouths——活性物按 totalMouths 分摊，
+  // 用剩余口数当分母会把一杯的量算多。
+  _pickUpFromShelf(offer, now) {
+    const old = offer.cup;
+    const remaining = this._remainingMouthsOf(offer);
+    const n = (old.resumeCount || 0) + 1;
+    const baseCupId = old.baseCupId || old.id;
+    const resumed = {
+      ...old,
+      id: `${baseCupId}~${n}`,
+      recipeId: old.recipeId || baseCupId,
+      baseCupId,
+      resumeCount: n,
+      resumedFrom: old.id,
+      resumeRemaining: remaining,
+      remainingMouths: remaining,
+      closed: false,
+      effectSettled: false,
+      effectEventEmitted: false
+    };
+    delete resumed.actualEffectDescription;
+    offer.cup = resumed;
+    offer.status = "open";
+    offer.pickedUpAt = now;
+    delete offer.shelvedAt;
+    return { offerId: offer.oneTimeId, claimedName: offer.claimedName, remainingMouths: remaining, totalMouths: resumed.totalMouths };
+  }
+  // 吧台上搁着的杯（不含手里那杯）。顺手把超时的收走。
+  shelvedCups(now = this.state.lastSettle) {
+    this.settle(now);
+    const rows = [];
+    for (const offer of this.offers.values()) {
+      if (offer.status !== "shelved") continue;
+      if (this._expireShelvedIfStale(offer, now)) continue;
+      rows.push(this._shelfRow(offer, now));
+    }
+    return rows;
+  }
+  // 给宿主看的「手里这杯」：没有分口喝的杯就是 null。
+  sippingCup(now = this.state.lastSettle) {
+    this.settle(now);
+    const offer = this._sippingOffer();
+    if (!offer) return null;
+    const last = this.state.currentCup?.lastMouthTime ?? offer.lastSipAt ?? now;
+    return {
+      offerId: offer.oneTimeId,
+      claimedName: offer.claimedName,
+      remainingMouths: this._remainingMouthsOf(offer),
+      totalMouths: offer.cup.totalMouths,
+      expiresInMin: Math.max(0, Math.ceil((last + EXPIRE_MIN * 60 * 1e3 - now) / 6e4))
+    };
   }
   rejectOffer(oneTimeId, viewerId, now = this.state.lastSettle) {
     this.settle(now);
@@ -3220,6 +3389,7 @@ var ProofEngine = class _ProofEngine {
       return { ok: false, error: "not_drinker" };
     }
     if (offer.status === "consumed") return { ok: false, error: "already_consumed" };
+    if (offer.status === "sipping") return { ok: false, error: "already_sipping" };
     if (offer.status === "expired") return { ok: false, error: "expired" };
     if (offer.status === "rejected") return { ok: true, idempotent: true };
     const snapshot = this.exportState();
@@ -3723,6 +3893,12 @@ var barManual = {
     finish: "\u5B83\u4E0D\u82E6\u3001\u4E0D\u751C\u3001\u4E0D\u9178\u3001\u4E0D\u6DA9\u3001\u4E0D\u9999\u3001\u4E0D\u70C8\u3002\u4EC0\u4E48\u4E5F\u4E0D\u627F\u8BFA\uFF0C\u4EC0\u4E48\u4E5F\u4E0D\u6539\u53D8\u3002\u4F60\u559D\u5B8C\u4E4B\u540E\u548C\u559D\u4E4B\u524D\u662F\u540C\u4E00\u4E2A\u4EBA\u3002",
     occasion: "\u4F46\u6709\u65F6\u5019\uFF0C\u5728\u4E00\u4E2A\u591F\u957F\u7684\u591C\u665A\u4E2D\u95F4\uFF0C\u8FD9\u6070\u597D\u662F\u4F60\u9700\u8981\u7684\u4E1C\u897F\u3002"
   },
+  \u767D\u6717\u59C6: {
+    glass: "\u676F\u578B\uFF1A\u77EE\u7403\u676F\uFF0C\u53EF\u4EE5\u52A0\u4E00\u5757\u51B0\u3002\u989C\u8272\uFF1A\u900F\u660E\u3002",
+    palate: "\u51D1\u8FD1\u95FB\uFF1A\u7518\u8517\u3002\u4E0D\u662F\u7CD6\u7684\u751C\uFF0C\u662F\u7518\u8517\u521A\u780D\u65AD\u65F6\u90A3\u79CD\u9752\u751F\u751F\u7684\u3001\u5E26\u7740\u8349\u6C41\u7684\u751C\u3002\u5E95\u4E0B\u6709\u4E00\u5C42\u5F88\u6DE1\u7684\u7CD6\u871C\u5473\uFF0C\u50CF\u5728\u70C8\u65E5\u4E0B\u8D70\u8FC7\u4E00\u7247\u521A\u6536\u5272\u7684\u7530\u3002\u5165\u53E3\u6BD4\u4F60\u9884\u60F3\u5F97\u5E72\u51C0\u3002\u751C\u5473\u5728\u820C\u5C16\u4E00\u95EA\u5C31\u8D70\u4E86\uFF0C\u7559\u4E0B\u9152\u7CBE\u7684\u6696\u548C\u4E00\u70B9\u70B9\u9752\u8349\u7684\u4F59\u5473\u3002\u5B83\u6CA1\u6709\u9ED1\u6717\u59C6\u90A3\u79CD\u7126\u7CD6\u7684\u91CD\u91CF\uFF0C\u6574\u4E2A\u4EBA\u8F7B\u88C5\u4E0A\u9635\u3002",
+    finish: "",
+    occasion: "\u767D\u6717\u59C6\u662F\u70ED\u5E26\u7684\u57FA\u9152\u3002\u5B83\u81EA\u5E26\u4E00\u79CD\u65E0\u6240\u8C13\u7684\u5F00\u6717\u3002\u653E\u8FDB\u4EFB\u4F55\u5E26\u67D1\u6A58\u7684\u4E1C\u897F\u91CC\uFF0C\u5B83\u90FD\u50CF\u672C\u6765\u5C31\u5C5E\u4E8E\u90A3\u91CC\u3002"
+  },
   \u9F99\u820C\u5170: {
     glass: "\u676F\u578B\uFF1A\u5B50\u5F39\u676F\uFF0C\u4E0D\u52A0\u51B0\u3002\u76D0\u548C\u9752\u67E0\u89D2\u6446\u5728\u65C1\u8FB9\uFF0C\u7528\u4E0D\u7528\u968F\u4F60\u3002",
     palate: "\u989C\u8272\uFF1A\u900F\u660E\u3002\u6709\u4E9B\u5728\u6876\u91CC\u5F85\u8FC7\uFF0C\u4F1A\u5E26\u4E00\u70B9\u91D1\uFF0C\u50CF\u88AB\u592A\u9633\u6652\u892A\u4E86\u8272\u7684\u65E7\u94C1\u76AE\u3002",
@@ -4154,6 +4330,12 @@ function flavorComponents2(sources, totalVolume) {
   }
   return comps;
 }
+function normalizeEffectHalfLife(value) {
+  if (value == null || value === "") return void 0;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < EFFECT_HALFLIFE_MIN_MIN || n > EFFECT_HALFLIFE_MIN_MAX) return void 0;
+  return n;
+}
 function buildFromParts(name, parts, opts = {}) {
   const {
     beta = 1,
@@ -4173,7 +4355,8 @@ function buildFromParts(name, parts, opts = {}) {
     registeredEffectText = "",
     registeredFlavorText = "",
     category = null,
-    internalHidden = false
+    internalHidden = false,
+    effectHalfLifeMin
   } = opts;
   const iceParts = iceMl > 0 ? [...parts, { id: "\u51B0", volume: iceMl }] : parts;
   const extra = dilutionVolume({
@@ -4252,6 +4435,8 @@ function buildFromParts(name, parts, opts = {}) {
     mouths,
     textures,
     method,
+    // 自定义效果半衰期（分钟）。没有就是全局默认，旧酒行为不变。
+    ...normalizeEffectHalfLife(effectHalfLifeMin) ? { effectHalfLifeMin: normalizeEffectHalfLife(effectHalfLifeMin) } : {},
     cupType,
     color,
     claimedFlavor: Object.fromEntries(
@@ -4537,6 +4722,7 @@ export {
   mlToStandardDrinks,
   mouthSuggestion,
   normalizeDrinkName,
+  normalizeEffectHalfLife,
   normalizeGarnishes,
   normalizeIngredientActives,
   normalizeLifecycleOptions,

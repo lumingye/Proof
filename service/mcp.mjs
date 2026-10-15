@@ -125,7 +125,7 @@ const TOOLS = [
   },
   {
     name: 'proof_bar',
-    description: 'Open the Proof bar for THIS agent: current identity, the visible drink menu (including visible garnishes; each entry has an id usable with proof_drink), pending offers, and whether the host auto-delivers Proof state. Read-only.',
+    description: 'Open the Proof bar for THIS agent: current identity, 今日酒单 (today\'s drink menu, including visible garnishes; each entry has an id usable with proof_drink; 可查看今日酒单上酒的介绍), pending offers, cupInHand (a cup you are sipping and have not finished: remaining mouths and minutes before it is taken away), cupsOnBar (half-finished cups you set down on the bar when you ordered something else: offerId, remaining mouths, minutes before they are cleared), and whether the host auto-delivers Proof state. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }
   },
   {
@@ -134,7 +134,8 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        drinkId: { type: 'string', description: 'Menu entry id from proof_bar.' }
+        drinkId: { type: 'string', description: 'Menu entry id from proof_bar.' },
+        mouths: { type: 'integer', minimum: 1, maximum: 50, description: '可选：这次只喝几口（分口喝）。不填 = 整杯喝完。没喝完的杯子挂在手里，用 proof_sip 接着喝；两口之间隔太久（约 70 分钟）杯子会被撤掉；手里有半杯时点新的一杯，旧杯搁到吧台上：没喝的口留着，从最后一口起约 70 分钟内能用 proof_sip 带 offerId 端回来，过了才收走。' }
       },
       required: ['drinkId'],
       additionalProperties: false
@@ -147,9 +148,22 @@ const TOOLS = [
       type: 'object',
       properties: {
         link: { type: 'string', description: 'Full public drink link, or the bare capability token.' },
-        beliefs: BELIEFS_SCHEMA
+        beliefs: BELIEFS_SCHEMA,
+        mouths: { type: 'integer', minimum: 1, maximum: 50, description: '可选：这次只喝几口（分口喝）。不填 = 整杯喝完。没喝完的杯子挂在手里，用 proof_sip 接着喝；两口之间隔太久（约 70 分钟）杯子会被撤掉；手里有半杯时点新的一杯，旧杯搁到吧台上：没喝的口留着，从最后一口起约 70 分钟内能用 proof_sip 带 offerId 端回来，过了才收走。' }
       },
       required: ['link'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'proof_sip',
+    description: '接着喝 THIS agent 没喝完的酒（分口喝）。默认喝手里那杯一口；带 offerId 可以把吧台上搁着的某一杯端回来喝（手里那杯会换上吧台）。最后一口喝完这杯才算结束、效果才开始慢慢散。手里那杯看 proof_bar 的 cupInHand，吧台上的看 cupsOnBar。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mouths: { type: 'integer', minimum: 1, maximum: 50, description: '这次喝几口，默认 1。超过剩下的就全喝完。' },
+        offerId: { type: 'string', description: '可选：喝哪一杯。不填 = 手里那杯；填 proof_bar 里 cupsOnBar 的 offerId = 从吧台端回来。' }
+      },
       additionalProperties: false
     }
   },
@@ -206,13 +220,20 @@ async function runTool(name, args = {}) {
   if (name === 'proof_drink') {
     const drinkId = String(args.drinkId || '').trim();
     if (!drinkId) return { ok: false, error: 'drink_id_required' };
-    const result = await callAgent(`/agent/menu/${encodeURIComponent(drinkId)}/drink`, { method: 'POST', body: {} });
+    const result = await callAgent(`/agent/menu/${encodeURIComponent(drinkId)}/drink`, { method: 'POST', body: args.mouths != null ? { mouths: args.mouths } : {} });
+    return result?.ok === false ? result : { ...result, internalUse: INTERNAL_USE_NOTE };
+  }
+  if (name === 'proof_sip') {
+    const sipBody = {};
+    if (args.mouths != null) sipBody.mouths = args.mouths;
+    if (args.offerId != null && args.offerId !== '') sipBody.offerId = String(args.offerId);
+    const result = await callAgent('/agent/sip', { method: 'POST', body: sipBody });
     return result?.ok === false ? result : { ...result, internalUse: INTERNAL_USE_NOTE };
   }
   if (name === 'proof_drink_link') {
     const capabilityToken = capabilityFromLink(args.link);
     if (!capabilityToken) return { ok: false, error: 'invalid_link' };
-    const result = await callAgent('/agent/offers/claim', { method: 'POST', body: { capabilityToken, beliefs: args.beliefs || [] } });
+    const result = await callAgent('/agent/offers/claim', { method: 'POST', body: { capabilityToken, beliefs: args.beliefs || [], ...(args.mouths != null ? { mouths: args.mouths } : {}) } });
     return result?.ok === false ? result : { ...result, internalUse: INTERNAL_USE_NOTE };
   }
   if (name === 'proof_reject_link') {

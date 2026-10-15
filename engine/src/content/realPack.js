@@ -2,7 +2,7 @@
 
 import { mlToStandardDrinks, doseToPhysiology } from '../core/dose.js';
 import { caffeineOfParts, caffeineToPhysiology } from '../core/active.js';
-import { TAU, MIN_MOUTHS, MOUTHFUL_ML } from '../core/constants.js';
+import { TAU, MIN_MOUTHS, MOUTHFUL_ML, EFFECT_HALFLIFE_MIN_MIN, EFFECT_HALFLIFE_MIN_MAX } from '../core/constants.js';
 import { mouthCountForVolume, dilutionVolume } from '../core/flavor.js';
 import { computeColor, computeCupType } from '../core/appearance.js';
 import { isPlainName } from '../core/sanitize.js';
@@ -329,6 +329,14 @@ function flavorComponents(sources, totalVolume) {
   return comps;
 }
 
+// 合法就返回整数分钟，不合法返回 undefined（调用方按默认处理）。
+export function normalizeEffectHalfLife(value) {
+  if (value == null || value === '') return undefined;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < EFFECT_HALFLIFE_MIN_MIN || n > EFFECT_HALFLIFE_MIN_MAX) return undefined;
+  return n;
+}
+
 export function buildFromParts(name, parts, opts = {}) {
   const {
     beta = 1,
@@ -348,7 +356,8 @@ export function buildFromParts(name, parts, opts = {}) {
     registeredEffectText = '',
     registeredFlavorText = '',
     category = null,
-    internalHidden = false
+    internalHidden = false,
+    effectHalfLifeMin
   } = opts;
   const iceParts = iceMl > 0 ? [...parts, { id: '冰', volume: iceMl }] : parts;
   const extra = dilutionVolume({
@@ -431,6 +440,8 @@ export function buildFromParts(name, parts, opts = {}) {
     mouths,
     textures,
     method,
+    // 自定义效果半衰期（分钟）。没有就是全局默认，旧酒行为不变。
+    ...(normalizeEffectHalfLife(effectHalfLifeMin) ? { effectHalfLifeMin: normalizeEffectHalfLife(effectHalfLifeMin) } : {}),
     cupType,
     color,
     claimedFlavor: Object.fromEntries(

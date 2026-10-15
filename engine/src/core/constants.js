@@ -39,6 +39,9 @@ export const SUPPRESSION = {
 };
 
 export const BELIEF_HALFLIFE_MIN = 30;
+// 特调可以自定义效果半衰期（分钟）。不填就是 BELIEF_HALFLIFE_MIN。
+export const EFFECT_HALFLIFE_MIN_MIN = 10;
+export const EFFECT_HALFLIFE_MIN_MAX = 180;
 export const EXPIRE_MIN = 70;
 export const MOUTHFUL_ML = 45;
 export const MIN_MOUTHS = 2;
