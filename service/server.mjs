@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { mkdir, readFile, rename, writeFile, chmod } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ProofEngine, buildFromParts, ingredients, menu, realPack, sanitizeClaimedName, sanitizeIntro, sanitizeFinish, assembleEffectDescription, assembleFlavorDescription, manualFor, normalizeEffectHalfLife, publicEffectDescription, createTurnBridge, resolveLifecycleConfig, isReservedHiddenName, normalizeGarnishes, buildAgentTurnContext, STATE_FRAME_NOTE, DETERMINISTIC_EFFECT_FRAME_NOTE, OBJECTIVE_EFFECT_FRAME_NOTE, BELIEF_EFFECT_FRAME_NOTE, sanitizeSubjectiveBelief, buildAgentStateHints, projectAgentObjectiveStates } from '../engine/src/index.js';
+import { ProofEngine, buildFromParts, ingredients, menu, realPack, sanitizeClaimedName, sanitizeIntro, sanitizeFinish, assembleEffectDescription, assembleFlavorDescription, manualFor, normalizeEffectHalfLife, publicEffectDescription, createTurnBridge, resolveLifecycleConfig, isReservedHiddenName, normalizeGarnishes, buildAgentTurnContext, STATE_FRAME_NOTE, DETERMINISTIC_EFFECT_FRAME_NOTE, OBJECTIVE_EFFECT_FRAME_NOTE, BELIEF_EFFECT_FRAME_NOTE, sanitizeSubjectiveBelief, buildAgentStateHints, projectAgentObjectiveStates, computeColor, computeCupType } from '../engine/src/index.js';
 import { hashUnit, HIDDEN_DRAW_P } from '../engine/src/core/hiddenDraw.js';
 import { normalizeUntrusted, looksLikeInstruction, INTRO_MAX } from '../engine/src/core/sanitize.js';
 import { adminFromRequest, mintSession, sessionCookie, writeAuthStatus, auditRecord } from './lib/adminAuth.mjs';
@@ -776,7 +776,12 @@ function publicAfterProjection(projection) {
 function agentAfterDrinkProjection(projection, cup = null, evalResult = null) {
   const source = projection || {};
   const hints = buildAgentStateHints(evalResult?.state, { maxHints: 4 });
+  // 外观跟人类第一屏同一来源：人看得到颜色和杯型，喝的 Agent 也该看得到。
+  const color = source.color || cup?.color || (cup?.sources ? computeColor(cup.sources, cup.totalVolume) : null);
+  const cupType = source.cupType || cup?.cupType || (cup ? computeCupType(cup) : null);
   const out = {
+    ...(cupType ? { cupType } : {}),
+    ...(color ? { color } : {}),
     flavorDescription: source.flavorDescription || NO_FLAVOR_TEXT,
     ...(hints.length ? { stateHints: hints } : {}),
     ...((Array.isArray(source.garnishes) && source.garnishes.length) || (Array.isArray(cup?.garnishes) && cup.garnishes.length) ? { garnishes: (source.garnishes?.length ? source.garnishes : cup.garnishes) } : {})

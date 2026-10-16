@@ -393,6 +393,20 @@ test('A7 Agent 能看见装饰：菜单投影与 Link 饮用结果都保留 garn
   assert.deepEqual(claimed.json.projection.garnishes, ['盐口']);
 });
 
+test('A7b Agent 喝 Link 时能看见颜色和杯型，跟人类第一屏一致', async (t) => {
+  const ctx = await startServer();
+  t.after(() => stopServer(ctx));
+  const link = await makeLink(ctx, { name: '红的', parts: [{ id: '金巴利', volume: 30 }, { id: '水', volume: 90 }] });
+  const claimed = await req(ctx, '/agent/offers/claim', {
+    method: 'POST', token: ctx.tokens.charb, body: { capabilityToken: link.token }
+  });
+  assert.equal(claimed.status, 200, JSON.stringify(claimed.json));
+  assert.equal(typeof claimed.json.projection.color, 'string');
+  assert.ok(claimed.json.projection.color.length > 0);
+  assert.notEqual(claimed.json.projection.color, '透明', '金巴利应当有颜色');
+  assert.equal(typeof claimed.json.projection.cupType, 'string');
+});
+
 test('A8 belief 同一对象可同时带 about + effects + subjectiveDescription，不存在字段互斥', async (t) => {
   const ctx = await startServer();
   t.after(() => stopServer(ctx));

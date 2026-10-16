@@ -95,11 +95,11 @@ b3535a447e3a3da2876ea48f05a02de2f44627b5d9d6fac76a503079ee29aa3c  ./service/link
 6c616b95a317cddd2b579e7efb98f929caf3dede4dc2627159eb9dd151426423  ./service/mcp.mjs
 9fe9f6ddad65f3de16f4b36ca39b0b2131b0f84b03fac4950fd6043ead0d276f  ./service/package.json
 712b4630f320b19b39873d8657b94834a889f3ff59cacee95bc98b8c5267d990  ./service/proof-service.service
-924dde42e0f578c58317f7fe0f960d3b365e604544690e2ae0f2ffd8aebac2e5  ./service/server.mjs
+19b55bc60905cc405ab93009a2f1442fdb1aaee32ef499b4498e2e5f80a9bc01  ./service/server.mjs
 c5b1bf44626290a7bb2f10603f454158ef5d3a453c3ef302c3c19c3a66d3465e  ./service/tests/adminAuth.test.js
 52bdfe70a9aaef084ea2e20145f2b767a253cefea721f9232a4c3bd58d5ec10e  ./service/tests/agent-bar-contract.test.mjs
 1592071f51ddb010d7c36372abeadc5e2ab739353a0161d644ec4eeee645447c  ./service/tests/agent-dynamic.test.mjs
-a0ab556abe3f71e7f107285e6b7d7bf310bfd63b5495e73bf75afd5c02b815cc  ./service/tests/agent-mcp-drink.test.js
+ad375dde116873a80dfc6d7c80e425e21cb6b286cd0c3ddf105b0548aaa3d163  ./service/tests/agent-mcp-drink.test.js
 9864cca0c884d81f637631759461d5a803e39ee37b33a2bc04c0b0ee6e0d6c51  ./service/tests/agent-registry-token.test.js
 5faea88db99a8c004f1a2aed9503a8892910a9756d0fd941ea8a667e8629d03a  ./service/tests/audit/audit-outlets.test.js
 f91bbc9a78d376ccd9b8c082ee0e14e108d348e7ec4bb18731d02489e460c69c  ./service/tests/birthday-repair.test.js
