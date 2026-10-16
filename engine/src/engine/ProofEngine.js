@@ -3,6 +3,7 @@
 import {
   EXPIRE_MIN,
   BLACKOUT_C,
+  CRASH_MIX_WINDOW_MIN,
   BLACKOUT_RECOVER_MS,
   VOMIT_C,
   SENSITIVITY_MIN,
@@ -91,6 +92,23 @@ function randomUUID() {
   });
 }
 
+// 把几杯的来源并成一锅：同一原料体积相加，按总液体重算占比。
+function mergeMixSources(lists) {
+  const byId = new Map();
+  for (const list of lists) {
+    for (const src of list || []) {
+      const volume = Number(src.volume) || 0;
+      if (volume <= 0) continue;
+      const prev = byId.get(src.id);
+      if (prev) prev.volume += volume;
+      else byId.set(src.id, { ...src, volume });
+    }
+  }
+  const merged = [...byId.values()];
+  const liquid = merged.reduce((n, src) => n + src.volume, 0);
+  return merged.map((src) => ({ ...src, volumeRatio: liquid > 0 ? src.volume / liquid : 0 }));
+}
+
 export class ProofEngine {
   constructor(state = null, contentPack = null, options = {}) {
     this.contentPack = contentPack || {
@@ -108,6 +126,7 @@ export class ProofEngine {
     // 与生命周期契约的 options.lifecycle 合流，**不并存两套表示**。
     this.lifecycle = normalizeLifecycleOptions({
       ...(options.blackoutEnabled === undefined ? {} : { blackoutEnabled: options.blackoutEnabled !== false }),
+      ...(options.vomitSpillEnabled === undefined ? {} : { vomitSpillEnabled: options.vomitSpillEnabled !== false }),
       ...(options.blackoutRecoverMs === undefined ? {} : { blackoutRecoveryHours: options.blackoutRecoverMs / 3600000 }),
       ...(options.lifecycle || {})
     });
@@ -156,7 +175,11 @@ export class ProofEngine {
       transientExpiredAt: null,
       lastTransientActivityAt: 0,
       // 累计标准杯（终身）。同时驱动口味耐受与功能性酒精耐受；reset 不清除。
-      lifetimeDrinks: 0
+      lifetimeDrinks: 0,
+      // 混喝窗口：最近开喝的几杯配方，宕机掷骰时并在一起算「杂」。reset 清。
+      recentMix: [],
+      // 这个 Agent 是否已经吐过一次倾泻（第一次要先标注）。终身，reset 不清。
+      vomitSpillShown: false
     };
   }
 
@@ -182,6 +205,8 @@ export class ProofEngine {
       revision: Number(raw.revision || 0),
       lastTransientActivityAt: Number(raw.lastTransientActivityAt || 0),
       lifetimeDrinks: Number(raw.lifetimeDrinks || 0),
+      recentMix: [...(raw.recentMix || [])],
+      vomitSpillShown: raw.vomitSpillShown === true,
       resetBoundary: raw.resetBoundary ? { ...raw.resetBoundary } : null,
       drinkEvents: [...(raw.drinkEvents || [])],
       transientExpiredAt: raw.transientExpiredAt ?? null,
@@ -218,6 +243,8 @@ export class ProofEngine {
       revision: this.state.revision || 0,
       lastTransientActivityAt: this.state.lastTransientActivityAt || 0,
       lifetimeDrinks: this.state.lifetimeDrinks || 0,
+      recentMix: this.state.recentMix || [],
+      vomitSpillShown: this.state.vomitSpillShown === true,
       resetBoundary: this.state.resetBoundary,
       drinkEvents: this.state.drinkEvents || [],
       transientExpiredAt: this.state.transientExpiredAt ?? null,
@@ -608,7 +635,7 @@ export class ProofEngine {
 
     const events = [];
     if (shouldVomit(cBefore, this.state.c, this.state.vomitArmed)) {
-      events.push(attachSafety(produceVomitEvent(this.contentPack)));
+      events.push(attachSafety(this._vomitEvent()));
       this.state.vomitArmed = false;
     }
     this._recoverFragments(now);
@@ -622,19 +649,30 @@ export class ProofEngine {
 
     const isFirst = (cur.mouthStartTimes || []).length === 1;
     const hiddenHit = !!(cur.hiddenDraw?.hit || cup.hiddenDraw?.hit);
-    if (!fixedCharacterCup && isFirst && !cur.crashRolled) {
+    if (isFirst && !cur.crashRolled) {
       cur.crashRolled = true;
-      if (!hiddenHit) {
-        const D = computeDiscreteness(cup.sources || []);
-        const significantCount = countSignificantSources(cup.sources || []);
-        const totalDrinks = (cup.mouths || []).reduce(
-          (s, m) => s + mlToStandardDrinks(m.volume, m.abv || 0),
-          0
-        );
+      const cupDrinks = (cup.mouths || []).reduce(
+        (s, m) => s + mlToStandardDrinks(m.volume, m.abv || 0),
+        0
+      );
+      // 混喝：窗口内先前开喝的几杯 + 这一杯，配方并成一锅再算「杂」和总量。
+      const earlier = this._recentMixWithin(now);
+      this._rememberMix(cup, cupDrinks, now);
+      // 固定酒单杯自身不掷（既有语义）；但和前面的杯混着喝时，混出来的那一锅照样可能宕。
+      const rollThisCup = !hiddenHit && (!fixedCharacterCup || earlier.length > 0);
+      if (rollThisCup) {
+        // 只有这一杯时保持原样（不合并同名来源），单杯判定与改动前逐字一致。
+        const pool = earlier.length
+          ? mergeMixSources([...earlier.map((e) => e.sources), cup.sources || []])
+          : (cup.sources || []);
+        const D = computeDiscreteness(pool);
+        const significantCount = countSignificantSources(pool);
+        const totalDrinks = cupDrinks + earlier.reduce((n, e) => n + (e.drinks || 0), 0);
+        const totalVolume = (cup.totalVolume || 0) + earlier.reduce((n, e) => n + (e.volume || 0), 0);
         if (rollCrash({
           D,
           standardDrinks: totalDrinks,
-          volumeMl: cup.totalVolume,
+          volumeMl: totalVolume,
           significantCount,
           isFirstMouth: true,
           random: this.random
@@ -676,7 +714,7 @@ export class ProofEngine {
       if (isHiddenIdentity(cup.claimedName)) {
         this.state.lastEvents = [...this.state.lastEvents, attachSafety(
           cup.claimedName === HIDDEN_BLACK_NAME
-            ? produceVomitEvent(this.contentPack)
+            ? this._vomitEvent()
             : produceCrashEvent(this.contentPack)
         )];
       }
@@ -692,6 +730,42 @@ export class ProofEngine {
 
     this.state.currentCup = cur;
     return { alcohol, c: this.state.c, events: this.state.lastEvents, drinkRecordId };
+  }
+
+  // 吐事件：带上「倾泻」开关与「是否第一次」。第一次倾泻之后记下，之后不再要求标注。
+  _vomitEvent() {
+    const event = produceVomitEvent(this.contentPack);
+    const spill = this.lifecycle.vomitSpillEnabled !== false;
+    const firstSpill = spill && this.state.vomitSpillShown !== true;
+    if (spill) this.state.vomitSpillShown = true;
+    return { ...event, spill, firstSpill };
+  }
+
+  _recentMixWithin(now) {
+    const windowMs = CRASH_MIX_WINDOW_MIN * 60 * 1000;
+    this.state.recentMix = (this.state.recentMix || []).filter((e) => now - Number(e.at) < windowMs);
+    return this.state.recentMix;
+  }
+
+  _rememberMix(cup, drinks, now) {
+    const sources = (cup.sources || []).map((src) => ({
+      id: src.id,
+      volume: Number(src.volume) || 0,
+      abv: src.abv || 0,
+      colorTag: src.colorTag,
+      treePath: src.treePath,
+      treePaths: src.treePaths,
+      flavor: { ...(src.flavor || {}) },
+      diluent: !!src.diluent,
+      textures: src.textures || []
+    }));
+    this.state.recentMix = [...(this.state.recentMix || []), {
+      cupId: cup.id,
+      at: now,
+      drinks,
+      volume: cup.totalVolume || 0,
+      sources
+    }];
   }
 
   _cupState(cup, now) {
@@ -836,6 +910,7 @@ export class ProofEngine {
     // 接口约定：reset 解除当前断片读取限制（内容不删），并写下边界。
     liftBlackouts(s, now);
     s.drinkEvents = [];
+    s.recentMix = [];
     s.lastTransientActivityAt = 0;
     markResetBoundary(s, now);
     return s;

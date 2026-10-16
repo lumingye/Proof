@@ -54,6 +54,10 @@ export function resolveLifecycleConfig(env = {}) {
   const blackoutEnabled = env.PROOF_BLACKOUT_ENABLED === undefined
     ? true
     : parseBool(env.PROOF_BLACKOUT_ENABLED, 'PROOF_BLACKOUT_ENABLED');
+  // 吐的倾泻：开着时 Agent 吐那一轮先倒出几行乱码/碎句；关掉只剩一句事实。
+  const vomitSpillEnabled = env.PROOF_VOMIT_SPILL_ENABLED === undefined
+    ? true
+    : parseBool(env.PROOF_VOMIT_SPILL_ENABLED, 'PROOF_VOMIT_SPILL_ENABLED');
   const blackoutRecoveryHours = env.PROOF_BLACKOUT_RECOVERY_HOURS === undefined
     ? DEFAULT_BLACKOUT_RECOVERY_HOURS
     : positiveHours(env.PROOF_BLACKOUT_RECOVERY_HOURS, 'PROOF_BLACKOUT_RECOVERY_HOURS');
@@ -66,6 +70,7 @@ export function resolveLifecycleConfig(env = {}) {
     transientTtlHours,
     transientTtlMs: transientTtlHours * HOUR_MS,
     blackoutEnabled,
+    vomitSpillEnabled,
     blackoutRecoveryHours,
     blackoutRecoveryMs: blackoutRecoveryHours * HOUR_MS,
     stateDbPath
@@ -359,6 +364,7 @@ export function applyResetBoundary(state, boundary) {
   state.pendingSensitivity = [];
   state.actives = {};
   state.drinkEvents = (state.drinkEvents || []).filter((event) => event.consumedAt > at);
+  state.recentMix = (state.recentMix || []).filter((entry) => entry.at > at);
   state.resetBoundary = { ...boundary };
   state.lastSettle = Math.max(Number(state.lastSettle || 0), at);
   return state;

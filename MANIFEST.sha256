@@ -1,11 +1,11 @@
 8f1e061f851595573c8ab404eda76a8cd4fdd2e93cd2b58dde5fe44f9bde692f  ./.gitignore
 c8f02851d966fe316f811b21601cc22342700c205a664e5e95493721e491db05  ./LICENSE
-18f3ac0b993030115210794fcdae8643a62692c6f4220c22e7497ebc7dd635c1  ./README.md
+ba2e77777eef97a876ec47bfc719759e63c09144faa9938b5325156391620167  ./README.md
 f5d67f92e1b6a4a95581619f35630e7cdb6e683884f1c8e8dcef8709b2a8560d  ./docs/content/原料表.md
 14b42eac31f9b76de1af689809e4cf7ac67e1f4f45a4b8c23fe8776ebf253058  ./docs/content/效果词库-33.md
 032d6ec5886f29977734e527cbd8967e98b40a03b13e183c143120987e8fe58d  ./docs/content/酒单-数据版.md
 85370fc94bcc14584d1e7fa35b6102af3fd718d9cced86938bc62b73365f209e  ./docs/content/酒单.md
-cb8686fb71da108b641d3434d5ae85d59f0a0a2b3751bd50fbca1ccf0e01fd62  ./docs/ordinary-mode-persistence.md
+9cb3c13b3d3a34b22ef4f40e05a181b4e0c14605e4d739b1e0758490994dbeb4  ./docs/ordinary-mode-persistence.md
 4d56952b0fb13bf8f9b6c13a6d4c34a075bac3af447636a1df4335d7576e2f97  ./engine/.gitignore
 a9ff4ef6cde210ce092debb47ff107f8c50a4a809c227ad03a09d08327eba58a  ./engine/package.json
 959cbf1ff5ad83a59304ae56cd05a191512c99af0b1677ede444d1725dc41593  ./engine/src/content/actives.js
@@ -15,7 +15,7 @@ bec8200f5fe06a12c7eeb2f84785fd58e870a97b9ca61482423bb82f0c400940  ./engine/src/c
 544978c09c74ea64ec23aeefce82bc5add703004e02342eb295fdf6a5bd86ef2  ./engine/src/core/active.js
 a07a177574e6af8da7f2b02700ba01958cc590298ee3a76dc279674b96810dfa  ./engine/src/core/appearance.js
 cadc0fbace11eb86f1d90d3a335bac25e7773a9da8a4a43b57be7b395ccb678e  ./engine/src/core/belief.js
-e563be9dd1aa7fa75aa5ab6c52eedc8ffec87e3ec5936eaf9c0c2773e47d2d85  ./engine/src/core/constants.js
+5e69fff3eb0a2d6743354cb81a8bf9b99cf77ff3da56abe8b795355b4b4210f2  ./engine/src/core/constants.js
 c0f486681badb54ff5a799e3dfaddaf246263140b54acc5bf8e8a862db0270d4  ./engine/src/core/dose.js
 ffe563bba8dd00d8d9dbd7149760303b23708af31ac92db7c8c262efd1f76933  ./engine/src/core/effects.js
 45b295fefffc3ae3b29184f33433becf4676a7d3b86612db58c14a2e89047864  ./engine/src/core/evaluate.js
@@ -25,15 +25,15 @@ ffe563bba8dd00d8d9dbd7149760303b23708af31ac92db7c8c262efd1f76933  ./engine/src/c
 56be42bd1d5bf5f2a20056d5fe7dd6c4e3cc03bae175e4432e6335c55e35ca12  ./engine/src/core/hangover.js
 c3203b9af64a6e810e9bac36d3a0e993b0186d42e7e3330088f45e0f3f4e1e63  ./engine/src/core/hiddenDraw.js
 90f10d88ccd69d5bad9e55f9c52751034b1ec360cff55ed4752112a83d50842a  ./engine/src/core/injection.js
-6d16cdd315668edb3eab6732c65ac3cc5290198d4ba2f8c6fa1835fa9029f3a6  ./engine/src/core/lifecycle.js
+d6c97ce39464f3c6cf55350fd3943dbfc8a4d6b30c2f523b355b79dbfa27320b  ./engine/src/core/lifecycle.js
 1d4da511a7566aee5f11afd221a9ae9d872e8b8607c22b62ff1b09f6b7b829dd  ./engine/src/core/recipe.js
 95162d1cd12d47bf1d14c8dccb80b1615741a8a2ec77b4ab662be6b7a1416e4e  ./engine/src/core/sanitize.js
 7d34142cf6d56b34e474012553759effff9b870c96fac8d1abd7de45833c889b  ./engine/src/core/visibility.js
 aced6a92d5d901eda78245d7d700ff0549a1f6c0193e4b56faaa7401a9641529  ./engine/src/dev-server.js
-0d8481d7aa0577c1479e653563b22b16886eb6f5e1ac3af17e7868463e1c9931  ./engine/src/engine/ProofEngine.js
+9cbedabf78fe72530aca7c20bd6fad31392d31184fe065ff774f4442cc5b7e8d  ./engine/src/engine/ProofEngine.js
 7ec2eed11ffcc1e90a2a306862059b0aa52f29c79e6aca0618781ec60acfb077  ./engine/src/frontend/twoScreen.js
 5c254de5979973a66ccea21512e215e28df53d8c602c1d382ffe665ce6e799be  ./engine/src/index.js
-68cb1188ed87e4c5378f41e02ee24e61c1a291569df602a4f49685bc3aea5f5e  ./engine/src/runtime/agentObjectiveStates.js
+e335a593fdb79ecb04e92d7642f9deabb7ca9336d4208b2e9ccdc1890680ce43  ./engine/src/runtime/agentObjectiveStates.js
 3f64c6ecc2440fbefa26a7dc3146859c58988d61e729dc450d2d83ce8a037e11  ./engine/src/runtime/agentStateHints.js
 b0cc8cf7dd074187badc56ec60222b38d24ac8402ffa16810bd061a311ea6f53  ./engine/src/runtime/agentStateUsePolicy.js
 9b0d066602c7f52c4ab4477329f2bacd24db5712f8ddc021c895fc25ca1dca60  ./engine/src/runtime/agentTurnContext.js
@@ -75,6 +75,7 @@ c0f905eacd37b7044850c24505716e053f7a4cc61dce80aef0a1e70104392b09  ./engine/tests
 1bbf2d02b29846043eb21a765ca8cec5a320ce1e5e73f6ae13dc3e299a313229  ./engine/tests/v11g-review.test.js
 6623cf7cc2c35c04a03829fe35296e923d558ba66448920f855ebc58ad990eaa  ./engine/tests/v11g.test.js
 2601e3ff6fdc8ea8896a41924597a82ccb77dba5c75c8dec6e2d5d084610c511  ./engine/tests/visibility.test.js
+0038e239dbfe97b8370ad787cb43c72f76dbc11540607b63378681b80021443c  ./engine/tests/vomit-spill-and-mix-crash.test.js
 3906dc17be3ff9b8b5aecafcce85971828073d1701218bd762edc1fe2ce20fd0  ./service/README.md
 7da4a6fb4206b80bbb4eb38bef1c2f91db25bbd0334070990816daab9335f55a  ./service/agent-cli.mjs
 b566a0cef1090744e2439b526198a1292d2ac51ef85000e4b2146181c7687e41  ./service/gateway/README.md
@@ -128,5 +129,5 @@ b0ee31b082f15dd44fe70361179162d525c8ad775ca1d450792f59c0d51d70f9  ./service/test
 634d26ba6cdd40af0001dea6522d1bab33b984419aa41081ff497ea3be4a72df  ./ui/drink-visuals.js
 f67468573f02cfd989dee4717e525e4424fe34bff1990b4434682301b79f947b  ./ui/drink/index.html
 c6abbb894c40a0232249e68e010359c435d1474ba9c8f11378547a975c1c55b4  ./ui/index.html
-fc8bf6b04b912eef9e09ca5529164e729b6be386f5cf327f367a35947b3d368a  ./ui/proof-engine.js
+f0490e8792d60dae66d26e2a026f8ba959473160f7b1231603d4dd297024eb93  ./ui/proof-engine.js
 d8d55e60401c2258ce98a033cacd2ef6fe9131b590a1474cdf55931cec6d1c53  ./ui/tests/e2e.test.js

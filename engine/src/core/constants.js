@@ -63,6 +63,8 @@ export const CRASH_DRINKS = 0.5;
 export const CRASH_VOLUME_ML = 60;
 export const CRASH_P = 0.6;
 export const CRASH_SIGNIFICANT_MIN = 5;
+// 混喝窗口：宕机第一口掷骰时，把这段时间内开喝的几杯配方并成一锅算「杂」。
+export const CRASH_MIX_WINDOW_MIN = 60;
 
 export const CAFFEINE_CAP = 4;
 export const CAFFEINE_HALF_LIFE_H = 5;

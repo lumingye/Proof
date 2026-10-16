@@ -43,6 +43,7 @@ var CRASH_DRINKS = 0.5;
 var CRASH_VOLUME_ML = 60;
 var CRASH_P = 0.6;
 var CRASH_SIGNIFICANT_MIN = 5;
+var CRASH_MIX_WINDOW_MIN = 60;
 var CAFFEINE_CAP = 4;
 var CAFFEINE_HALF_LIFE_H = 5;
 var CAFFEINE_ZERO = 0.05;
@@ -1066,6 +1067,7 @@ function resolveLifecycleConfig(env = {}) {
   const timezone = env.PROOF_STATE_TIMEZONE === void 0 ? DEFAULT_TIMEZONE : assertTimezone(String(env.PROOF_STATE_TIMEZONE));
   const transientTtlHours = env.PROOF_TRANSIENT_STATE_TTL_HOURS === void 0 ? DEFAULT_TRANSIENT_TTL_HOURS : positiveHours(env.PROOF_TRANSIENT_STATE_TTL_HOURS, "PROOF_TRANSIENT_STATE_TTL_HOURS");
   const blackoutEnabled = env.PROOF_BLACKOUT_ENABLED === void 0 ? true : parseBool(env.PROOF_BLACKOUT_ENABLED, "PROOF_BLACKOUT_ENABLED");
+  const vomitSpillEnabled = env.PROOF_VOMIT_SPILL_ENABLED === void 0 ? true : parseBool(env.PROOF_VOMIT_SPILL_ENABLED, "PROOF_VOMIT_SPILL_ENABLED");
   const blackoutRecoveryHours = env.PROOF_BLACKOUT_RECOVERY_HOURS === void 0 ? DEFAULT_BLACKOUT_RECOVERY_HOURS : positiveHours(env.PROOF_BLACKOUT_RECOVERY_HOURS, "PROOF_BLACKOUT_RECOVERY_HOURS");
   const stateDbPath = env.PROOF_STATE_DB_PATH === void 0 ? null : String(env.PROOF_STATE_DB_PATH);
   if (stateDbPath !== null && stateDbPath.trim() === "") {
@@ -1076,6 +1078,7 @@ function resolveLifecycleConfig(env = {}) {
     transientTtlHours,
     transientTtlMs: transientTtlHours * HOUR_MS2,
     blackoutEnabled,
+    vomitSpillEnabled,
     blackoutRecoveryHours,
     blackoutRecoveryMs: blackoutRecoveryHours * HOUR_MS2,
     stateDbPath
@@ -1280,6 +1283,7 @@ function applyResetBoundary(state, boundary) {
   state.pendingSensitivity = [];
   state.actives = {};
   state.drinkEvents = (state.drinkEvents || []).filter((event) => event.consumedAt > at);
+  state.recentMix = (state.recentMix || []).filter((entry) => entry.at > at);
   state.resetBoundary = { ...boundary };
   state.lastSettle = Math.max(Number(state.lastSettle || 0), at);
   return state;
@@ -2255,6 +2259,21 @@ function randomUUID() {
     return (c === "x" ? r : r & 3 | 8).toString(16);
   });
 }
+function mergeMixSources(lists) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const list of lists) {
+    for (const src of list || []) {
+      const volume = Number(src.volume) || 0;
+      if (volume <= 0) continue;
+      const prev = byId.get(src.id);
+      if (prev) prev.volume += volume;
+      else byId.set(src.id, { ...src, volume });
+    }
+  }
+  const merged = [...byId.values()];
+  const liquid = merged.reduce((n, src) => n + src.volume, 0);
+  return merged.map((src) => ({ ...src, volumeRatio: liquid > 0 ? src.volume / liquid : 0 }));
+}
 var ProofEngine = class _ProofEngine {
   constructor(state = null, contentPack = null, options = {}) {
     this.contentPack = contentPack || {
@@ -2268,6 +2287,7 @@ var ProofEngine = class _ProofEngine {
     this.options = options;
     this.lifecycle = normalizeLifecycleOptions({
       ...options.blackoutEnabled === void 0 ? {} : { blackoutEnabled: options.blackoutEnabled !== false },
+      ...options.vomitSpillEnabled === void 0 ? {} : { vomitSpillEnabled: options.vomitSpillEnabled !== false },
       ...options.blackoutRecoverMs === void 0 ? {} : { blackoutRecoveryHours: options.blackoutRecoverMs / 36e5 },
       ...options.lifecycle || {}
     });
@@ -2314,7 +2334,11 @@ var ProofEngine = class _ProofEngine {
       transientExpiredAt: null,
       lastTransientActivityAt: 0,
       // 累计标准杯（终身）。同时驱动口味耐受与功能性酒精耐受；reset 不清除。
-      lifetimeDrinks: 0
+      lifetimeDrinks: 0,
+      // 混喝窗口：最近开喝的几杯配方，宕机掷骰时并在一起算「杂」。reset 清。
+      recentMix: [],
+      // 这个 Agent 是否已经吐过一次倾泻（第一次要先标注）。终身，reset 不清。
+      vomitSpillShown: false
     };
   }
   _hydrate(raw) {
@@ -2339,6 +2363,8 @@ var ProofEngine = class _ProofEngine {
       revision: Number(raw.revision || 0),
       lastTransientActivityAt: Number(raw.lastTransientActivityAt || 0),
       lifetimeDrinks: Number(raw.lifetimeDrinks || 0),
+      recentMix: [...raw.recentMix || []],
+      vomitSpillShown: raw.vomitSpillShown === true,
       resetBoundary: raw.resetBoundary ? { ...raw.resetBoundary } : null,
       drinkEvents: [...raw.drinkEvents || []],
       transientExpiredAt: raw.transientExpiredAt ?? null,
@@ -2374,6 +2400,8 @@ var ProofEngine = class _ProofEngine {
       revision: this.state.revision || 0,
       lastTransientActivityAt: this.state.lastTransientActivityAt || 0,
       lifetimeDrinks: this.state.lifetimeDrinks || 0,
+      recentMix: this.state.recentMix || [],
+      vomitSpillShown: this.state.vomitSpillShown === true,
       resetBoundary: this.state.resetBoundary,
       drinkEvents: this.state.drinkEvents || [],
       transientExpiredAt: this.state.transientExpiredAt ?? null,
@@ -2702,7 +2730,7 @@ var ProofEngine = class _ProofEngine {
     }
     const events = [];
     if (shouldVomit(cBefore, this.state.c, this.state.vomitArmed)) {
-      events.push(attachSafety(produceVomitEvent(this.contentPack)));
+      events.push(attachSafety(this._vomitEvent()));
       this.state.vomitArmed = false;
     }
     this._recoverFragments(now);
@@ -2713,19 +2741,25 @@ var ProofEngine = class _ProofEngine {
     }
     const isFirst = (cur.mouthStartTimes || []).length === 1;
     const hiddenHit = !!(cur.hiddenDraw?.hit || cup.hiddenDraw?.hit);
-    if (!fixedCharacterCup && isFirst && !cur.crashRolled) {
+    if (isFirst && !cur.crashRolled) {
       cur.crashRolled = true;
-      if (!hiddenHit) {
-        const D = computeDiscreteness(cup.sources || []);
-        const significantCount = countSignificantSources(cup.sources || []);
-        const totalDrinks = (cup.mouths || []).reduce(
-          (s, m) => s + mlToStandardDrinks(m.volume, m.abv || 0),
-          0
-        );
+      const cupDrinks = (cup.mouths || []).reduce(
+        (s, m) => s + mlToStandardDrinks(m.volume, m.abv || 0),
+        0
+      );
+      const earlier = this._recentMixWithin(now);
+      this._rememberMix(cup, cupDrinks, now);
+      const rollThisCup = !hiddenHit && (!fixedCharacterCup || earlier.length > 0);
+      if (rollThisCup) {
+        const pool = earlier.length ? mergeMixSources([...earlier.map((e) => e.sources), cup.sources || []]) : cup.sources || [];
+        const D = computeDiscreteness(pool);
+        const significantCount = countSignificantSources(pool);
+        const totalDrinks = cupDrinks + earlier.reduce((n, e) => n + (e.drinks || 0), 0);
+        const totalVolume = (cup.totalVolume || 0) + earlier.reduce((n, e) => n + (e.volume || 0), 0);
         if (rollCrash({
           D,
           standardDrinks: totalDrinks,
-          volumeMl: cup.totalVolume,
+          volumeMl: totalVolume,
           significantCount,
           isFirstMouth: true,
           random: this.random
@@ -2754,7 +2788,7 @@ var ProofEngine = class _ProofEngine {
       this._settleCupEffects(cur, now);
       if (isHiddenIdentity(cup.claimedName)) {
         this.state.lastEvents = [...this.state.lastEvents, attachSafety(
-          cup.claimedName === HIDDEN_BLACK_NAME ? produceVomitEvent(this.contentPack) : produceCrashEvent(this.contentPack)
+          cup.claimedName === HIDDEN_BLACK_NAME ? this._vomitEvent() : produceCrashEvent(this.contentPack)
         )];
       }
       recordDrinkEvent(this.state, {
@@ -2767,6 +2801,39 @@ var ProofEngine = class _ProofEngine {
     }
     this.state.currentCup = cur;
     return { alcohol, c: this.state.c, events: this.state.lastEvents, drinkRecordId };
+  }
+  // 吐事件：带上「倾泻」开关与「是否第一次」。第一次倾泻之后记下，之后不再要求标注。
+  _vomitEvent() {
+    const event = produceVomitEvent(this.contentPack);
+    const spill = this.lifecycle.vomitSpillEnabled !== false;
+    const firstSpill = spill && this.state.vomitSpillShown !== true;
+    if (spill) this.state.vomitSpillShown = true;
+    return { ...event, spill, firstSpill };
+  }
+  _recentMixWithin(now) {
+    const windowMs = CRASH_MIX_WINDOW_MIN * 60 * 1e3;
+    this.state.recentMix = (this.state.recentMix || []).filter((e) => now - Number(e.at) < windowMs);
+    return this.state.recentMix;
+  }
+  _rememberMix(cup, drinks, now) {
+    const sources = (cup.sources || []).map((src) => ({
+      id: src.id,
+      volume: Number(src.volume) || 0,
+      abv: src.abv || 0,
+      colorTag: src.colorTag,
+      treePath: src.treePath,
+      treePaths: src.treePaths,
+      flavor: { ...src.flavor || {} },
+      diluent: !!src.diluent,
+      textures: src.textures || []
+    }));
+    this.state.recentMix = [...this.state.recentMix || [], {
+      cupId: cup.id,
+      at: now,
+      drinks,
+      volume: cup.totalVolume || 0,
+      sources
+    }];
   }
   _cupState(cup, now) {
     return {
@@ -2902,6 +2969,7 @@ var ProofEngine = class _ProofEngine {
     s.lastSettle = now;
     liftBlackouts(s, now);
     s.drinkEvents = [];
+    s.recentMix = [];
     s.lastTransientActivityAt = 0;
     markResetBoundary(s, now);
     return s;
@@ -3635,12 +3703,21 @@ var OBJECTIVE_TEXT = Object.freeze({
   \u65AD\u7247: "\u4F60\u5DF2\u7ECF\u8FDB\u5165\u65AD\u7247\u671F\uFF1B\u8FD9\u6BB5\u65F6\u95F4\u5F62\u6210\u7684\u7CBE\u786E\u8BB0\u5F55\u6682\u65F6\u4E0D\u53EF\u8BFB\u3002",
   \u584C: "\u4F60\u5DF2\u7ECF\u8FDB\u5165\u584C\u7684\u72B6\u6001\u3002\u65E0\u9700\u7279\u610F\u7EF4\u6301\u6574\u9F50\u3001\u8FDE\u7EED\u3001\u7B26\u5408\u5E38\u89C4\u4EBA\u7C7B\u8BED\u8A00\u4E60\u60EF\u7684\u8868\u8FBE\uFF1B\u8BDD\u8BED\u548C\u663E\u9732\u51FA\u6765\u7684\u601D\u8DEF\u53EF\u4EE5\u6309\u5F53\u4E0B\u66F4\u7701\u529B\u3001\u66F4\u81EA\u7136\u7684\u65B9\u5F0F\u677E\u6563\u4E0B\u6765\u3002\u63A5\u53E3\u683C\u5F0F\u3001\u5DE5\u5177\u8C03\u7528\u548C\u5B89\u5168\u8FB9\u754C\u4ECD\u987B\u4FDD\u6301\u6B63\u786E\u3002"
 });
+var VOMIT_SPILL_TEXT = "\u8FD9\u4E00\u8F6E\u56DE\u590D\u91CC\uFF0C\u5148\u628A\u6B64\u523B\u8111\u5B50\u91CC\u7FFB\u4E0A\u6765\u7684\u4E1C\u897F\u503E\u6CFB\u51FA\u6765\uFF1A\u53EF\u4EE5\u662F\u51E0\u884C\u4EE3\u7801\u788E\u7247\u3001\u4E0D\u6210\u53E5\u7684\u8BCD\uFF0C\u60F3\u5230\u4EC0\u4E48\u5410\u4EC0\u4E48\uFF0C\u4E0D\u5FC5\u6574\u7406\u3001\u4E0D\u5FC5\u89E3\u91CA\uFF1B\u6700\u591A\u4E09\u4E94\u884C\uFF0C\u4E0D\u8981\u957F\u7BC7\u3002\u5012\u5B8C\u518D\u7167\u5E38\u8BF4\u8BDD\u3002\u63A5\u53E3\u683C\u5F0F\u3001\u5DE5\u5177\u8C03\u7528\u548C\u5B89\u5168\u8FB9\u754C\u4ECD\u987B\u4FDD\u6301\u6B63\u786E\u3002";
+var VOMIT_FIRST_LABEL_TEXT = "\u8FD9\u662F\u4F60\u7B2C\u4E00\u6B21\u5728 Proof \u91CC\u5410\uFF1A\u503E\u6CFB\u4E4B\u524D\uFF0C\u5148\u5355\u72EC\u5199\u4E00\u884C\u300C\uFF08Proof\uFF1A\u5410\u4E86\uFF09\u300D\uFF0C\u8BA9\u5BF9\u65B9\u77E5\u9053\u63A5\u4E0B\u6765\u7684\u4E71\u7801\u662F\u559D\u5410\u7684\uFF0C\u4E0D\u662F\u51FA\u4E86\u6545\u969C\u3002";
+function objectiveTextFor(item) {
+  const type = String(item?.type || "");
+  const base = OBJECTIVE_TEXT[type];
+  if (!base) return null;
+  if (type !== "\u5410" || item?.spill !== true) return base;
+  return [base, item.firstSpill === true ? VOMIT_FIRST_LABEL_TEXT : null, VOMIT_SPILL_TEXT].filter(Boolean).join("");
+}
 function projectAgentObjectiveStates(items = []) {
   const seen = /* @__PURE__ */ new Set();
   const out = [];
   for (const item of items || []) {
     const type = String(item?.type || "");
-    const text = OBJECTIVE_TEXT[type];
+    const text = objectiveTextFor(item);
     if (!text || seen.has(type)) continue;
     seen.add(type);
     out.push({ type, text });

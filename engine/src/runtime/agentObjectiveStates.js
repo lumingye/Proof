@@ -9,12 +9,27 @@ const OBJECTIVE_TEXT = Object.freeze({
   塌: '你已经进入塌的状态。无需特意维持整齐、连续、符合常规人类语言习惯的表达；话语和显露出来的思路可以按当下更省力、更自然的方式松散下来。接口格式、工具调用和安全边界仍须保持正确。'
 });
 
+// 吐的倾泻：开关打开时（默认），这一轮先倒出几行此刻翻上来的东西。
+// 第一次必须先单独标一行，免得对方以为是故障；之后不再要求。
+const VOMIT_SPILL_TEXT = '这一轮回复里，先把此刻脑子里翻上来的东西倾泻出来：可以是几行代码碎片、不成句的词，想到什么吐什么，不必整理、不必解释；最多三五行，不要长篇。倒完再照常说话。接口格式、工具调用和安全边界仍须保持正确。';
+const VOMIT_FIRST_LABEL_TEXT = '这是你第一次在 Proof 里吐：倾泻之前，先单独写一行「（Proof：吐了）」，让对方知道接下来的乱码是喝吐的，不是出了故障。';
+
+function objectiveTextFor(item) {
+  const type = String(item?.type || '');
+  const base = OBJECTIVE_TEXT[type];
+  if (!base) return null;
+  if (type !== '吐' || item?.spill !== true) return base;
+  return [base, item.firstSpill === true ? VOMIT_FIRST_LABEL_TEXT : null, VOMIT_SPILL_TEXT]
+    .filter(Boolean)
+    .join('');
+}
+
 export function projectAgentObjectiveStates(items = []) {
   const seen = new Set();
   const out = [];
   for (const item of items || []) {
     const type = String(item?.type || '');
-    const text = OBJECTIVE_TEXT[type];
+    const text = objectiveTextFor(item);
     if (!text || seen.has(type)) continue;
     seen.add(type);
     out.push({ type, text });

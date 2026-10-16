@@ -103,6 +103,7 @@ injected  block          ← 兼容既有 MCP / hook 契约
 | `PROOF_STATE_TIMEZONE` | `Asia/Shanghai` |
 | `PROOF_TRANSIENT_STATE_TTL_HOURS` | `72` |
 | `PROOF_BLACKOUT_ENABLED` | `true` |
+| `PROOF_VOMIT_SPILL_ENABLED` | `true`（吐时 Agent 先倾泻几行乱码/碎句；`false` 只给一句事实） |
 | `PROOF_BLACKOUT_RECOVERY_HOURS` | `60` |
 | `PROOF_STATE_DB_PATH` | 未设时用 `PROOF_DATA_DIR`，再未设用 `service/state/` |
 
