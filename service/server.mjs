@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ProofEngine, buildFromParts, ingredients, menu, realPack, sanitizeClaimedName, sanitizeIntro, sanitizeFinish, assembleEffectDescription, assembleFlavorDescription, manualFor, normalizeEffectHalfLife, publicEffectDescription, createTurnBridge, resolveLifecycleConfig, isReservedHiddenName, normalizeGarnishes, buildAgentTurnContext, STATE_FRAME_NOTE, DETERMINISTIC_EFFECT_FRAME_NOTE, OBJECTIVE_EFFECT_FRAME_NOTE, BELIEF_EFFECT_FRAME_NOTE, sanitizeSubjectiveBelief, buildAgentStateHints, projectAgentObjectiveStates, computeColor, computeCupType } from '../engine/src/index.js';
 import { hashUnit, HIDDEN_DRAW_P } from '../engine/src/core/hiddenDraw.js';
+import { drinkLayersFor } from './lib/drinkLayers.mjs';
 import { normalizeUntrusted, looksLikeInstruction, INTRO_MAX } from '../engine/src/core/sanitize.js';
 import { adminFromRequest, mintSession, sessionCookie, writeAuthStatus, auditRecord } from './lib/adminAuth.mjs';
 import { createGateway } from './gateway/index.mjs';
@@ -703,6 +704,8 @@ const AI_ORDER_PROJECTION_KEYS = [
   'color',
   // 装饰物是外观，跟杯型颜色同级；不挂进来，AI 点单时看不见杯口那圈盐。
   'garnishes',
+  // 分层外观：跟调酒台前端同一套渲染规则（ui/drink-visuals.js）。
+  'look',
   // 吧台手册的详细介绍。只有调酒台打开「详细介绍给 Agent 看」全局开关时才有。
   'detail'
 ];
@@ -749,7 +752,8 @@ function aiOrderProjection(cup) {
     effectDescription: cup.registeredEffectText || effectText(claimedEffects) || ZERO_PUSH_TEXT,
     cupType: cup.cupType,
     color: cup.color,
-    garnishes: cup.garnishes || []
+    garnishes: cup.garnishes || [],
+    look: drinkLayersFor(cup) || undefined
   };
   const detail = manualDetailForAgent(cup);
   if (detail) projection.detail = detail;
@@ -779,9 +783,11 @@ function agentAfterDrinkProjection(projection, cup = null, evalResult = null) {
   // 外观跟人类第一屏同一来源：人看得到颜色和杯型，喝的 Agent 也该看得到。
   const color = source.color || cup?.color || (cup?.sources ? computeColor(cup.sources, cup.totalVolume) : null);
   const cupType = source.cupType || cup?.cupType || (cup ? computeCupType(cup) : null);
+  const look = cup ? drinkLayersFor(cup) : null;
   const out = {
     ...(cupType ? { cupType } : {}),
     ...(color ? { color } : {}),
+    ...(look ? { look } : {}),
     flavorDescription: source.flavorDescription || NO_FLAVOR_TEXT,
     ...(hints.length ? { stateHints: hints } : {}),
     ...((Array.isArray(source.garnishes) && source.garnishes.length) || (Array.isArray(cup?.garnishes) && cup.garnishes.length) ? { garnishes: (source.garnishes?.length ? source.garnishes : cup.garnishes) } : {})
@@ -1127,6 +1133,7 @@ const server = http.createServer(async (req, res) => {
        const viewed = engine.viewOffer(capability.offerId, PUBLIC_DRINKER_ID, Date.now());
         if (!viewed.ok) return json(res, 404, viewed);
         if (viewed.status !== 'open') return json(res, 410, { ok: false, error: 'link_expired' });
+        // 第一屏保持白名单（名字、简介、杯型、整体颜色）：分层外观只在喝下之后给 Agent。
         return json(res, 200, {
           ok: true,
           status: viewed.status,

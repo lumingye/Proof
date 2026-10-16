@@ -407,6 +407,39 @@ test('A7b Agent 喝 Link 时能看见颜色和杯型，跟人类第一屏一致'
   assert.equal(typeof claimed.json.projection.cupType, 'string');
 });
 
+test('A7c Agent 喝下之后看得到分层外观：没搅的按密度从下到上；第一屏仍只给整体颜色', async (t) => {
+  const ctx = await startServer();
+  t.after(() => stopServer(ctx));
+  const link = await makeLink(ctx, { name: '两层', parts: [{ id: '金巴利', volume: 30 }, { id: '金酒', volume: 30 }] });
+  const peek = await fetch(`${ctx.base}/capability/offer`, { headers: { authorization: `Bearer ${link.token}` } });
+  const peeked = await peek.json();
+  assert.equal(peek.status, 200, JSON.stringify(peeked));
+  assert.equal(Object.hasOwn(peeked.projection, 'look'), false, '第一屏白名单不加分层');
+
+  const claimed = await req(ctx, '/agent/offers/claim', {
+    method: 'POST', token: ctx.tokens.charb, body: { capabilityToken: link.token }
+  });
+  assert.equal(claimed.status, 200, JSON.stringify(claimed.json));
+  const look = claimed.json.projection.look;
+  assert.equal(look.mixed, false);
+  assert.equal(look.layers.length, 2, JSON.stringify(look));
+  assert.equal(look.layers[0].color, '红', '金巴利更重，应在底层');
+  assert.match(look.text, /^从下到上：/);
+});
+
+test('A7d 摇过/搅过的杯只有一层混合色', async (t) => {
+  const ctx = await startServer();
+  t.after(() => stopServer(ctx));
+  const link = await makeLink(ctx, { name: '搅匀', method: 'stir', parts: [{ id: '金巴利', volume: 30 }, { id: '金酒', volume: 30 }] });
+  const claimed = await req(ctx, '/agent/offers/claim', {
+    method: 'POST', token: ctx.tokens.charb, body: { capabilityToken: link.token }
+  });
+  assert.equal(claimed.status, 200, JSON.stringify(claimed.json));
+  assert.equal(claimed.json.projection.look.mixed, true);
+  assert.equal(claimed.json.projection.look.layers.length, 1);
+  assert.match(claimed.json.projection.look.text, /^一整杯混匀的/);
+});
+
 test('A8 belief 同一对象可同时带 about + effects + subjectiveDescription，不存在字段互斥', async (t) => {
   const ctx = await startServer();
   t.after(() => stopServer(ctx));

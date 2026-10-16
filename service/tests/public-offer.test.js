@@ -420,7 +420,7 @@ test('AI order projection has recipe and natural language without vectors', asyn
   const home = await req(ctx, '/agent/home', { token: ctx.charc });
   assert.equal(home.status, 200);
   assert.ok(home.json.menu.length > 0);
-  const expected = ['color', 'cupType', 'effectDescription', 'flavorDescription', 'garnishes', 'id', 'intro', 'name', 'recipe'];
+  const expected = ['color', 'cupType', 'effectDescription', 'flavorDescription', 'garnishes', 'id', 'intro', 'look', 'name', 'recipe'];
   for (const item of home.json.menu) {
     assert.deepEqual(Object.keys(item).sort(), expected);
     assert.ok(Array.isArray(item.recipe));
