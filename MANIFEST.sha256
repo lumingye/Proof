@@ -33,7 +33,7 @@ aced6a92d5d901eda78245d7d700ff0549a1f6c0193e4b56faaa7401a9641529  ./engine/src/d
 0d8481d7aa0577c1479e653563b22b16886eb6f5e1ac3af17e7868463e1c9931  ./engine/src/engine/ProofEngine.js
 7ec2eed11ffcc1e90a2a306862059b0aa52f29c79e6aca0618781ec60acfb077  ./engine/src/frontend/twoScreen.js
 5c254de5979973a66ccea21512e215e28df53d8c602c1d382ffe665ce6e799be  ./engine/src/index.js
-1777d1ed70764880a50232bf6411efefa922bcfa56a871ea4018a547cfa7f95d  ./engine/src/runtime/agentObjectiveStates.js
+68cb1188ed87e4c5378f41e02ee24e61c1a291569df602a4f49685bc3aea5f5e  ./engine/src/runtime/agentObjectiveStates.js
 3f64c6ecc2440fbefa26a7dc3146859c58988d61e729dc450d2d83ce8a037e11  ./engine/src/runtime/agentStateHints.js
 b0cc8cf7dd074187badc56ec60222b38d24ac8402ffa16810bd061a311ea6f53  ./engine/src/runtime/agentStateUsePolicy.js
 9b0d066602c7f52c4ab4477329f2bacd24db5712f8ddc021c895fc25ca1dca60  ./engine/src/runtime/agentTurnContext.js
@@ -50,6 +50,7 @@ f9923b3d04ac5a5116a826f1d102cdc447280c67fb5ac1d371ab76668f572722  ./engine/tests
 293d53dfbfb2b33de1dc34603e6d8ad4993e79a44b1e34d1c335845077af0984  ./engine/tests/audit/helpers.audit.js
 6b4a6bd8392776ac76f3a74ccdbe0f26b027570105193a68797d48c68e9d8008  ./engine/tests/character-belief.test.js
 e7484822b126b9b03258667632de0be7856d71d72403d91a47bba0acdca03df1  ./engine/tests/color-reactive.test.js
+3a5b6ecfa0e5675742786920a56a82d11328b4b4c172c8b2738c8e4bc4621d37  ./engine/tests/crash-agent-text.test.js
 acd5d18f1a0ada245f0987598116ea88abbaee1cacdfa22f77f323c2a0a07fc2  ./engine/tests/effect-half-life.test.js
 c90011dddfcc9761359495ec352a80edc83770f984f31d1633e139a79ae455b7  ./engine/tests/helpers.js
 be61f2a11d9e91b3ba4d1b241f8769f752bd410f97c20a75d1c66c75a34ad809  ./engine/tests/hidden-draw-determinism.test.js
@@ -127,5 +128,5 @@ b0ee31b082f15dd44fe70361179162d525c8ad775ca1d450792f59c0d51d70f9  ./service/test
 634d26ba6cdd40af0001dea6522d1bab33b984419aa41081ff497ea3be4a72df  ./ui/drink-visuals.js
 f67468573f02cfd989dee4717e525e4424fe34bff1990b4434682301b79f947b  ./ui/drink/index.html
 c6abbb894c40a0232249e68e010359c435d1474ba9c8f11378547a975c1c55b4  ./ui/index.html
-bf4ab9026460a5f35bed81c5e5f0c9bc4a3f0ebe2827336c20f7c27a58e38fbf  ./ui/proof-engine.js
+fc8bf6b04b912eef9e09ca5529164e729b6be386f5cf327f367a35947b3d368a  ./ui/proof-engine.js
 d8d55e60401c2258ce98a033cacd2ef6fe9131b590a1474cdf55931cec6d1c53  ./ui/tests/e2e.test.js
