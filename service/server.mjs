@@ -1133,11 +1133,13 @@ const server = http.createServer(async (req, res) => {
        const viewed = engine.viewOffer(capability.offerId, PUBLIC_DRINKER_ID, Date.now());
         if (!viewed.ok) return json(res, 404, viewed);
         if (viewed.status !== 'open') return json(res, 410, { ok: false, error: 'link_expired' });
-        // 第一屏保持白名单（名字、简介、杯型、整体颜色）：分层外观只在喝下之后给 Agent。
+        // 第一屏：名字、简介、杯型、整体颜色、装饰，加分层外观——喝之前本来就看得见杯子长什么样。
+        const viewedCup = engine.offers.get(capability.offerId)?.cup;
+        const look = viewedCup ? drinkLayersFor(viewedCup) : null;
         return json(res, 200, {
           ok: true,
           status: viewed.status,
-          projection: publicBeforeProjection(viewed.projection)
+          projection: { ...publicBeforeProjection(viewed.projection), ...(look ? { look } : {}) }
         });
      }
       if (req.method === 'POST') {

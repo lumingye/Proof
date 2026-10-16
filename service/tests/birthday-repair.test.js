@@ -166,7 +166,9 @@ test('FIX-4：公开链接第一屏不含味道、效果、收尾与配方', asy
   for (const banned of ['flavor', 'flavorDescription', 'finish', 'recipe', 'claimedEffects', 'actualEffectDescription']) {
     assert.equal(keys.includes(banned), false, `第一屏不得含 ${banned}，实际字段：${keys.join(',')}`);
   }
-  assert.deepEqual(keys.sort(), ['claimedName', 'color', 'cupType', 'intro'].sort());
+  // 2026-10-16 宁宁定：分层外观（look）喝前就看得见，也进第一屏；它是颜色不是配方。
+  assert.deepEqual(keys.sort(), ['claimedName', 'color', 'cupType', 'intro', 'look'].sort());
+  assert.equal(JSON.stringify(body.projection.look).includes('金酒'), false, 'look 不得带原料名');
 });
 
 test('FIX-4：喝完之后才给味道与效果', async (t) => {

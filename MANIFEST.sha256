@@ -1,6 +1,6 @@
 8f1e061f851595573c8ab404eda76a8cd4fdd2e93cd2b58dde5fe44f9bde692f  ./.gitignore
 c8f02851d966fe316f811b21601cc22342700c205a664e5e95493721e491db05  ./LICENSE
-2de12647e73f894180be43d852a3c06cd51a1bea3843f794cb4dc1577dcbbcf4  ./README.md
+a4c7db224845e1454e2f57af225d03bbff2a06f65c70d422fdfb13384ff2041f  ./README.md
 f5d67f92e1b6a4a95581619f35630e7cdb6e683884f1c8e8dcef8709b2a8560d  ./docs/content/原料表.md
 14b42eac31f9b76de1af689809e4cf7ac67e1f4f45a4b8c23fe8776ebf253058  ./docs/content/效果词库-33.md
 032d6ec5886f29977734e527cbd8967e98b40a03b13e183c143120987e8fe58d  ./docs/content/酒单-数据版.md
@@ -96,14 +96,14 @@ b3535a447e3a3da2876ea48f05a02de2f44627b5d9d6fac76a503079ee29aa3c  ./service/link
 6c616b95a317cddd2b579e7efb98f929caf3dede4dc2627159eb9dd151426423  ./service/mcp.mjs
 9fe9f6ddad65f3de16f4b36ca39b0b2131b0f84b03fac4950fd6043ead0d276f  ./service/package.json
 712b4630f320b19b39873d8657b94834a889f3ff59cacee95bc98b8c5267d990  ./service/proof-service.service
-f7574c18314b4de5feb6dc1be613734da34daa9ccc16bc200737d9ee182724af  ./service/server.mjs
+c122f7d6994de544fc2ebbf0199071c9c8cd36aca041daa462720994f62c19ce  ./service/server.mjs
 c5b1bf44626290a7bb2f10603f454158ef5d3a453c3ef302c3c19c3a66d3465e  ./service/tests/adminAuth.test.js
 52bdfe70a9aaef084ea2e20145f2b767a253cefea721f9232a4c3bd58d5ec10e  ./service/tests/agent-bar-contract.test.mjs
 1592071f51ddb010d7c36372abeadc5e2ab739353a0161d644ec4eeee645447c  ./service/tests/agent-dynamic.test.mjs
-ff02519ebe1a7ea66dc7da94c3d2cf372c3635076bf2f20efd5c6706b718e4ba  ./service/tests/agent-mcp-drink.test.js
+9a9ad7a241654b4bba1350e1165039d432a99b78251d932ae62b109b02201c0a  ./service/tests/agent-mcp-drink.test.js
 9864cca0c884d81f637631759461d5a803e39ee37b33a2bc04c0b0ee6e0d6c51  ./service/tests/agent-registry-token.test.js
 5faea88db99a8c004f1a2aed9503a8892910a9756d0fd941ea8a667e8629d03a  ./service/tests/audit/audit-outlets.test.js
-f91bbc9a78d376ccd9b8c082ee0e14e108d348e7ec4bb18731d02489e460c69c  ./service/tests/birthday-repair.test.js
+b48016c389ae8b059a9e5bf2610fd0184afa0d904421feb59695234f6f2f3fda  ./service/tests/birthday-repair.test.js
 5b20fd94a8c2f806db48bf85d4223c44f9f31aee8f4ae7da18ac5f7c6677dfb1  ./service/tests/effect-half-life-http.test.js
 46a6956150ba0e70fc7e62af6695d42411f5b8bacb3a3b0a84743261e9ea7f64  ./service/tests/gateway-adapters.test.mjs
 e7802ded7d329cf13f456fb3d65f50423febfc7b2aa816f096ef11cdd2c11d6a  ./service/tests/gateway-blackout-recovery.test.mjs
@@ -122,7 +122,7 @@ cf02586cb0ce7d76a423fb943adf3fd846cb4cecd303b7ba596b81bd70da904d  ./service/test
 dced931786a7554718b614a5d83d8049c99493bbe50aa51ba41f8a01060a0970  ./service/tests/lifecycle-http.test.js
 728d969cecfe831643c0caba3ae0635e815723d5dfa3c3365233154cb3596e33  ./service/tests/mcp-identity-hardening.test.js
 ab81874abaaf46002a1135d8a8e093e544e4acd871adbca7600e18cc76c9ac87  ./service/tests/mix-method.test.mjs
-38dbe57233ccb02b35dbfe84bed4f6f2a7bfe79c1bbc39a6430b30aea44d54f2  ./service/tests/public-offer.test.js
+bcd7193facedd32ceec1ca50faf72e4e125f7282e5c7cd7b848322aee1488936  ./service/tests/public-offer.test.js
 ffba2677433fdbb33b5c908464dea14eb8316434bf8f29cd4be5f959fe0cab06  ./service/tests/repair-reserved-name.test.js
 459c646fee7e351161e25f476f443daebebcae9a759d6d53b1955f3097e0f7c1  ./service/tests/sip-by-sip-http.test.js
 f622c7ea2437d93772514098f6ebcb5d8fc4dd6ef323a53e57136ee032fb7166  ./service/tests/state-delivery-reset.test.js

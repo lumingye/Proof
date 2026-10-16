@@ -393,7 +393,7 @@ test('public before and after projections stay within their allowlists', async (
   const made = await makeOffer(ctx, { name: 'projection-contract' });
   const before = await req(ctx, '/capability/offer', { token: made.token });
   assert.equal(before.status, 200);
-  assert.deepEqual(Object.keys(before.json.projection).sort(), ['claimedName', 'color', 'cupType', 'intro']);
+  assert.deepEqual(Object.keys(before.json.projection).sort(), ['claimedName', 'color', 'cupType', 'intro', 'look']);
   for (const banned of ['flavor', 'claimedEffects', 'claimedEffectText', 'recipe', 'effects', 'actualEffectDescription']) {
     assert.equal(banned in before.json.projection, false);
   }
